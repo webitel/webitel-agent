@@ -1,7 +1,7 @@
 // login.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:webitel_agent_flutter/storage.dart';
 
 class LoginWebView extends StatefulWidget {
   final String url;
@@ -13,7 +13,7 @@ class LoginWebView extends StatefulWidget {
 }
 
 class _LoginWebViewState extends State<LoginWebView> {
-  final _storage = const FlutterSecureStorage();
+  final _storage = SecureStorageService();
 
   // Removed bool _isTokenProcessing = false;
 
@@ -70,7 +70,7 @@ class _LoginWebViewState extends State<LoginWebView> {
                 'DEBUG: Conditions met: Processing token and attempting to pop WebView.',
               );
 
-              await _storage.write(key: 'token', value: tokenFromUrl);
+              await _storage.writeAccessToken(tokenFromUrl);
               debugPrint('Logged in. Token stored: $tokenFromUrl');
 
               if (mounted) {
