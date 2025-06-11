@@ -1,58 +1,36 @@
-// main.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:webitel_agent_flutter/ws/ws.dart';
 
-import 'config.dart'; // Assumed to contain AppConfig.loginUrl
-import 'login.dart'; // Your LoginWebView
-import 'storage.dart'; // Your SecureStorageService
-import 'tray.dart'; // Your TrayService
+import 'config.dart';
+import 'login.dart';
+import 'storage.dart';
+import 'tray.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // load config
   await dotenv.load(fileName: ".env");
 
-  // Initialize TrayService early
   await TrayService.instance.initTray();
 
-  // Set the onLogin callback for TrayService
-  // THIS IS THE KEY MODIFICATION
   TrayService.instance.onLogin = () async {
-    // Make the callback ASYNC
     debugPrint('TrayService: Login initiated. Launching WebView...');
-
-    // Push the LoginWebView and AWAIT its completion (when it pops)
     await navigatorKey.currentState?.push(
       MaterialPageRoute(builder: (_) => LoginWebView(url: AppConfig.loginUrl)),
     );
 
-    // *******************************************************************
-    // --- EXECUTION RESUMES HERE ONLY AFTER LoginWebView has POPPED ---
-    // *******************************************************************
-
     debugPrint('LoginWebView has closed. Checking login status...');
-
-    // Check if the login was successful (i.e., a token was stored)
     final token = await SecureStorageService().readAccessToken();
 
     if (token != null) {
       debugPrint('Login successful. Token found.');
 
-      // Derive the base URL from your AppConfig.loginUrl
       final Uri loginUri = Uri.parse(AppConfig.loginUrl);
       final String determinedBaseUrl =
           '${loginUri.scheme}://${loginUri.host}${loginUri.hasPort ? ':${loginUri.port}' : ''}';
 
       debugPrint('Determined Base URL for API calls: $determinedBaseUrl');
-
-      // **CALL setBaseUrl HERE**
       TrayService.instance.setBaseUrl(determinedBaseUrl);
-      debugPrint('TrayService base URL updated after successful login.');
-
-      // You might also want to update the tray menu immediately to reflect login status
-      // (e.g., disable Login, enable Logout, change status text)
-      // TrayService.instance._buildMenu(); // This might need to be public or triggered
-      // TrayService.instance._setStatus('online'); // Or appropriate logged-in status
     } else {
       debugPrint('Login was cancelled or failed. No token stored.');
     }
@@ -63,15 +41,103 @@ void main() async {
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  WebitelSocket? _socket;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: const Scaffold(body: Center(child: Text('Tray App Running'))),
       navigatorKey: navigatorKey,
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('Tray App Running'),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () async {
+                  final token = await SecureStorageService().readAccessToken();
+                  if (token == null) {
+                    debugPrint('❌ No token. Please login first.');
+                    return;
+                  }
+
+                  debugPrint('Connecting to WebSocket...');
+                  final socket = WebitelSocket(token);
+                  await socket.connect();
+                  setState(() {
+                    _socket = socket;
+                  });
+                  debugPrint('✅ WebSocket connected.');
+                },
+                child: const Text("Connect to ws"),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: () async {
+                  if (_socket == null) {
+                    debugPrint('⚠️ Please connect to the WebSocket first.');
+                    return;
+                  }
+
+                  try {
+                    final auth = await _socket!.authenticate();
+                    debugPrint(
+                      '✅ Authorized as ${auth.authorizationUser} (${auth.displayName})',
+                    );
+                  } catch (e) {
+                    debugPrint('❌ Auth failed: $e');
+                  }
+                },
+                child: const Text("Authorize"),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: () async {
+                  if (_socket == null) {
+                    debugPrint('⚠️ Please connect to the WebSocket first.');
+                    return;
+                  }
+
+                  try {
+                    final agent = await _socket!.getAgentSession();
+                    debugPrint('✅ Agent: $agent');
+                  } catch (e) {
+                    debugPrint('❌ agent fetch failed: $e');
+                  }
+                },
+                child: const Text("Get agent"),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: () async {
+                  if (_socket == null) {
+                    debugPrint('⚠️ Please connect to the WebSocket first.');
+                    return;
+                  }
+
+                  try {
+                    final device = await _socket!.getUserDefaultDevice();
+                    debugPrint('✅ Device: $device');
+                  } catch (e) {
+                    debugPrint('❌ device fetch failed: $e');
+                  }
+                },
+                child: const Text("Get device"),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
