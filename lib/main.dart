@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:webitel_agent_flutter/screenshot.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 
 import 'config.dart';
@@ -50,6 +51,18 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   WebitelSocket? _socket;
+  late ScreenshotSenderService _screenshotSender;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _screenshotSender = ScreenshotSenderService(
+      uploadUrl:
+          'http://10.10.10.5:10023/api/v2/file/screenshot/upload?token=your_token',
+      interval: const Duration(seconds: 5),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -133,6 +146,22 @@ class _MyAppState extends State<MyApp> {
                   }
                 },
                 child: const Text("Get device"),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: () {
+                  _screenshotSender.start();
+                  debugPrint('🟢 Screenshot capturing started.');
+                },
+                child: const Text("Start Screenshot Sender"),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: () {
+                  _screenshotSender.stop();
+                  debugPrint('🔴 Screenshot capturing stopped.');
+                },
+                child: const Text("Stop Screenshot Sender"),
               ),
             ],
           ),

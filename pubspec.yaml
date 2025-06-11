@@ -17,6 +17,8 @@ dependencies:
   flutter_inappwebview: ^6.1.5
   http: ^1.4.0
   web_socket_channel: ^3.0.3
+  path_provider: ^2.1.5
+  screen_capturer: ^0.2.3
 
 dev_dependencies:
   flutter_test:
