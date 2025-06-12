@@ -1,7 +1,8 @@
-// login.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:webitel_agent_flutter/storage.dart';
+
+import 'logger.dart';
 
 class LoginWebView extends StatefulWidget {
   final String url;
@@ -14,8 +15,7 @@ class LoginWebView extends StatefulWidget {
 
 class _LoginWebViewState extends State<LoginWebView> {
   final _storage = SecureStorageService();
-
-  // Removed bool _isTokenProcessing = false;
+  final _logger = LoggerService();
 
   @override
   void initState() {
@@ -29,78 +29,74 @@ class _LoginWebViewState extends State<LoginWebView> {
         initialUrlRequest: URLRequest(url: WebUri(widget.url)),
         initialSettings: InAppWebViewSettings(javaScriptEnabled: true),
         onWebViewCreated: (controller) {
-          // _controller removed, no need to store it
+          // No controller stored, so no logs here
         },
         onLoadStop: (controller, url) async {
-          debugPrint('Page finished loading: $url');
+          _logger.debug('Page finished loading: $url');
         },
         onNavigationResponse: (controller, navigationResponse) async {
           final url = navigationResponse.response?.url;
           if (url != null) {
             final uri = Uri.parse(url.toString());
-            debugPrint('Navigation Response URL: $uri');
-            debugPrint(
-              'DEBUG: Full URI query parameters: ${uri.queryParameters}',
-            );
+            _logger.debug('Navigation Response URL: $uri');
+            _logger.debug('Full URI query parameters: ${uri.queryParameters}');
 
             String? tokenFromUrl;
 
             final bool hasAccessTokenKey = uri.queryParameters.containsKey(
               'accessToken',
             );
-            debugPrint(
-              'DEBUG: Does queryParameters contain "accessToken" key? $hasAccessTokenKey',
+            _logger.debug(
+              'Does queryParameters contain "accessToken" key? $hasAccessTokenKey',
             );
 
             if (hasAccessTokenKey) {
               tokenFromUrl = uri.queryParameters['accessToken'];
-              debugPrint(
-                'DEBUG: Value of accessToken from queryParameters: $tokenFromUrl',
+              _logger.debug(
+                'Value of accessToken from queryParameters: $tokenFromUrl',
               );
             }
 
             final bool isTokenNull = tokenFromUrl == null;
             final bool isTokenEmpty = tokenFromUrl?.isEmpty ?? true;
-            debugPrint('DEBUG: Is tokenFromUrl null? $isTokenNull');
-            debugPrint('DEBUG: Is tokenFromUrl empty? $isTokenEmpty');
+            _logger.debug('Is tokenFromUrl null? $isTokenNull');
+            _logger.debug('Is tokenFromUrl empty? $isTokenEmpty');
 
-            // The main condition simplified: only check if token is valid
             if (tokenFromUrl != null && tokenFromUrl.isNotEmpty) {
-              debugPrint(
-                'DEBUG: Conditions met: Processing token and attempting to pop WebView.',
+              _logger.debug(
+                'Conditions met: Processing token and attempting to pop WebView.',
               );
 
               await _storage.writeAccessToken(tokenFromUrl);
-              debugPrint('Logged in. Token stored: $tokenFromUrl');
+              _logger.info('Logged in. Token stored.');
 
               if (mounted) {
-                Navigator.of(context).pop(); // HIDES THE WEBVIEW!
+                Navigator.of(context).pop(); // Hide the WebView
               }
               return NavigationResponseAction.CANCEL; // Stop navigation
             } else {
-              debugPrint('DEBUG: Token NOT processed.');
+              _logger.debug('Token NOT processed.');
               if (tokenFromUrl == null) {
-                debugPrint('DEBUG: Reason: tokenFromUrl is null.');
+                _logger.debug('Reason: tokenFromUrl is null.');
               } else if (tokenFromUrl.isEmpty) {
-                debugPrint('DEBUG: Reason: tokenFromUrl is empty.');
+                _logger.debug('Reason: tokenFromUrl is empty.');
               }
             }
           }
           return NavigationResponseAction.ALLOW; // Allow normal navigation
         },
         onReceivedError: (controller, request, error) {
-          debugPrint('WebView Error:');
-          debugPrint('  URL: ${request.url}');
-          debugPrint('  Description: ${error.description}');
+          _logger.error(
+            'WebView Error: URL=${request.url} Description=${error.description}',
+          );
         },
         onReceivedHttpError: (controller, request, response) {
-          debugPrint('WebView HTTP Error:');
-          debugPrint('  URL: ${request.url}');
-          debugPrint('  Status Code: ${response.statusCode}');
-          debugPrint('  Reason Phrase: ${response.reasonPhrase}');
+          _logger.error(
+            'WebView HTTP Error: URL=${request.url} StatusCode=${response.statusCode} ReasonPhrase=${response.reasonPhrase}',
+          );
         },
         onConsoleMessage: (controller, consoleMessage) {
-          debugPrint('WEB CONSOLE: ${consoleMessage.message}');
+          _logger.debug('WEB CONSOLE: ${consoleMessage.message}');
         },
       ),
     );

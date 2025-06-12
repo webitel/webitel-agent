@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:webitel_agent_flutter/presentation/main.dart';
 import 'package:webitel_agent_flutter/screenshot.dart';
+import 'package:webitel_agent_flutter/ws/config.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 
 import 'config.dart';
+import 'logger.dart';
 import 'login.dart';
 import 'storage.dart';
 import 'tray.dart';
@@ -11,162 +14,61 @@ import 'tray.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
+  final logger = LoggerService();
+
+  final storage = SecureStorageService();
 
   await TrayService.instance.initTray();
 
   TrayService.instance.onLogin = () async {
-    debugPrint('TrayService: Login initiated. Launching WebView...');
+    logger.debug('TrayService: Login initiated. Launching WebView...');
     await navigatorKey.currentState?.push(
       MaterialPageRoute(builder: (_) => LoginWebView(url: AppConfig.loginUrl)),
     );
 
-    debugPrint('LoginWebView has closed. Checking login status...');
-    final token = await SecureStorageService().readAccessToken();
+    logger.debug('LoginWebView has closed. Checking login status...');
+    final token = await storage.readAccessToken();
 
     if (token != null) {
-      debugPrint('Login successful. Token found.');
+      logger.debug('Login successful. Token found.');
 
       final Uri loginUri = Uri.parse(AppConfig.loginUrl);
       final String determinedBaseUrl =
           '${loginUri.scheme}://${loginUri.host}${loginUri.hasPort ? ':${loginUri.port}' : ''}';
 
-      debugPrint('Determined Base URL for API calls: $determinedBaseUrl');
+      logger.debug('Determined Base URL for API calls: $determinedBaseUrl');
       TrayService.instance.setBaseUrl(determinedBaseUrl);
     } else {
-      debugPrint('Login was cancelled or failed. No token stored.');
+      logger.debug('Login was cancelled or failed. No token stored.');
     }
   };
 
+  final token = await storage.readAccessToken();
+  if (token == null) {
+    logger.error('No token. Please login first.');
+    return;
+  }
+  final socket = WebitelSocket(
+    config: WebitelSocketConfig(url: AppConfig.webitelWsUrl, token: token),
+  );
+  await socket.connect();
+  await socket.authenticate();
+  final agent = await socket.getAgentSession();
+  await storage.writeAgentId(agent.agentId);
+
+  TrayService.instance.attachSocket(socket);
+
+  // Start screenshots if enabled in config
+  if (AppConfig.screenshotEnabled) {
+    final screenshotService = ScreenshotSenderService(
+      uploadUrl: AppConfig.mediaUploadUrl,
+      interval: Duration(seconds: AppConfig.screenshotPeriodicitySec),
+    );
+    screenshotService.start();
+    logger.info(
+      'Screenshot service started with interval ${AppConfig.screenshotPeriodicitySec} seconds.',
+    );
+  }
+
   runApp(const MyApp());
-}
-
-final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-
-class MyApp extends StatefulWidget {
-  const MyApp({super.key});
-
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  WebitelSocket? _socket;
-  late ScreenshotSenderService _screenshotSender;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _screenshotSender = ScreenshotSenderService(
-      uploadUrl:
-          'http://10.10.10.5:10023/api/v2/file/screenshot/upload?token=your_token',
-      interval: const Duration(seconds: 5),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: navigatorKey,
-      debugShowCheckedModeBanner: false,
-      home: Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text('Tray App Running'),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () async {
-                  final token = await SecureStorageService().readAccessToken();
-                  if (token == null) {
-                    debugPrint('❌ No token. Please login first.');
-                    return;
-                  }
-
-                  debugPrint('Connecting to WebSocket...');
-                  final socket = WebitelSocket(token);
-                  await socket.connect();
-                  setState(() {
-                    _socket = socket;
-                  });
-                  debugPrint('✅ WebSocket connected.');
-                },
-                child: const Text("Connect to ws"),
-              ),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: () async {
-                  if (_socket == null) {
-                    debugPrint('⚠️ Please connect to the WebSocket first.');
-                    return;
-                  }
-
-                  try {
-                    final auth = await _socket!.authenticate();
-                    debugPrint(
-                      '✅ Authorized as ${auth.authorizationUser} (${auth.displayName})',
-                    );
-                  } catch (e) {
-                    debugPrint('❌ Auth failed: $e');
-                  }
-                },
-                child: const Text("Authorize"),
-              ),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: () async {
-                  if (_socket == null) {
-                    debugPrint('⚠️ Please connect to the WebSocket first.');
-                    return;
-                  }
-
-                  try {
-                    final agent = await _socket!.getAgentSession();
-                    debugPrint('✅ Agent: $agent');
-                  } catch (e) {
-                    debugPrint('❌ agent fetch failed: $e');
-                  }
-                },
-                child: const Text("Get agent"),
-              ),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: () async {
-                  if (_socket == null) {
-                    debugPrint('⚠️ Please connect to the WebSocket first.');
-                    return;
-                  }
-
-                  try {
-                    final device = await _socket!.getUserDefaultDevice();
-                    debugPrint('✅ Device: $device');
-                  } catch (e) {
-                    debugPrint('❌ device fetch failed: $e');
-                  }
-                },
-                child: const Text("Get device"),
-              ),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: () {
-                  _screenshotSender.start();
-                  debugPrint('🟢 Screenshot capturing started.');
-                },
-                child: const Text("Start Screenshot Sender"),
-              ),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: () {
-                  _screenshotSender.stop();
-                  debugPrint('🔴 Screenshot capturing stopped.');
-                },
-                child: const Text("Stop Screenshot Sender"),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }

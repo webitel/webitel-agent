@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:screen_capturer/screen_capturer.dart';
+
+import 'logger.dart';
 
 class ScreenshotSenderService {
   final String uploadUrl;
@@ -13,10 +16,16 @@ class ScreenshotSenderService {
   Timer? _timer;
   bool _isRunning = false;
 
-  ScreenshotSenderService({
-    required this.uploadUrl,
-    this.interval = const Duration(seconds: 90),
-  });
+  final _logger = LoggerService();
+
+  ScreenshotSenderService({required this.uploadUrl, Duration? interval})
+    : interval =
+          interval ??
+          Duration(
+            seconds:
+                int.tryParse(dotenv.env['SCREENSHOT_PERIODICITY_SEC'] ?? '') ??
+                90,
+          );
 
   void start() {
     if (_isRunning) return;
@@ -38,9 +47,7 @@ class ScreenshotSenderService {
         final allowed = await ScreenCapturer.instance.isAccessAllowed();
         if (!allowed) {
           await ScreenCapturer.instance.requestAccess(onlyOpenPrefPane: true);
-          if (kDebugMode) {
-            print('⚠️ Screen capture access not yet granted.');
-          }
+          _logger.warn('Screen capture access not yet granted.');
           return;
         }
       }
@@ -59,19 +66,19 @@ class ScreenshotSenderService {
       );
 
       if (capture == null) {
-        if (kDebugMode) print('⚠️ Capture returned null.');
+        _logger.warn('Capture returned null.');
         return;
       }
 
       // Read bytes from saved file
       final file = File(fullPath);
       if (!await file.exists()) {
-        if (kDebugMode) print('⚠️ Screenshot file does not exist at $fullPath');
+        _logger.warn('Screenshot file does not exist at $fullPath');
         return;
       }
       final bytes = await file.readAsBytes();
       if (bytes.isEmpty) {
-        if (kDebugMode) print('⚠️ Screenshot file is empty.');
+        _logger.warn('Screenshot file is empty.');
         return;
       }
 
@@ -86,18 +93,12 @@ class ScreenshotSenderService {
       );
 
       if (res.statusCode >= 200 && res.statusCode < 300) {
-        if (kDebugMode) {
-          print('✅ Screenshot uploaded: $filename');
-        }
+        _logger.info('Screenshot uploaded: $filename');
       } else {
-        if (kDebugMode) {
-          print('❌ Upload failed: ${res.statusCode} — ${res.body}');
-        }
+        _logger.error('Upload failed: ${res.statusCode} — ${res.body}');
       }
     } catch (e, stack) {
-      if (kDebugMode) {
-        print('❗ Screenshot capture/upload failed: $e\n$stack');
-      }
+      _logger.error('Screenshot capture/upload failed: $e\n$stack');
     }
   }
 }

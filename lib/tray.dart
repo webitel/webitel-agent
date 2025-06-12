@@ -1,95 +1,98 @@
-// tray.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:tray_manager/tray_manager.dart';
-import 'package:webitel_agent_flutter/config.dart'; // Import your AppConfig to get loginUrl
+import 'package:webitel_agent_flutter/config.dart';
 import 'package:webitel_agent_flutter/storage.dart';
+import 'package:webitel_agent_flutter/ws/ws.dart';
+
+import 'logger.dart';
 
 class TrayService with TrayListener {
   static final TrayService instance = TrayService._();
 
+  final _logger = LoggerService();
+  final _secureStorage = SecureStorageService();
+
   TrayService._();
 
-  final _secureStorage = SecureStorageService();
   String _status = 'offline';
   DateTime? _statusChangedAt;
   Timer? _tooltipTimer;
 
-  void Function()?
-  onLogin; // Callback for when login is initiated (to show WebView)
-
+  void Function()? onLogin;
   String? _baseUrl;
 
-  // Method to set the base URL after a successful login
-  void setBaseUrl(String url) {
-    _baseUrl = url;
-    debugPrint('TrayService: Base URL set to $_baseUrl');
-    _buildMenu(); // Rebuild menu when base URL/login state might change
+  WebitelSocket? _socket;
+  StreamSubscription<String>? _agentStatusSubscription;
+
+  void attachSocket(WebitelSocket socket) {
+    _socket = socket;
+    _agentStatusSubscription?.cancel();
+    _agentStatusSubscription = _socket!.agentStatusStream.listen((status) {
+      _logger.info('TrayService: Received agent status update: $status');
+      _setStatus(status);
+    });
   }
 
   Future<void> initTray() async {
     trayManager.addListener(this);
-
     await trayManager.setIcon(_iconPathForStatus(_status));
     await trayManager.setToolTip('Status: $_status');
 
-    // --- NEW LOGIC HERE ---
     await _checkInitialLoginStatusAndSetBaseUrl();
-    // --- END NEW LOGIC ---
-
-    await _buildMenu(); // Build menu after status and baseUrl are potentially set
+    await _buildMenu();
   }
 
-  // NEW: Method to check login status on app start and set baseUrl
+  void setBaseUrl(String url) {
+    _baseUrl = url;
+    _logger.debug('TrayService: Base URL set to $_baseUrl');
+    _buildMenu();
+  }
+
   Future<void> _checkInitialLoginStatusAndSetBaseUrl() async {
     final token = await _secureStorage.readAccessToken();
 
     if (token != null) {
-      debugPrint('TrayService: Found existing token on launch.');
-      // If a token exists, derive the base URL from your AppConfig.loginUrl
-      // This assumes AppConfig.loginUrl is consistent and available.
-      final Uri loginUri = Uri.parse(
-        AppConfig.loginUrl,
-      ); // Use your AppConfig.loginUrl
+      _logger.debug('TrayService: Found existing token on launch.');
+      final Uri loginUri = Uri.parse(AppConfig.loginUrl);
       final String determinedBaseUrl =
           '${loginUri.scheme}://${loginUri.host}${loginUri.hasPort ? ':${loginUri.port}' : ''}';
 
-      debugPrint(
-        'TrayService: Derived Base URL from existing token: $determinedBaseUrl',
-      );
-      _baseUrl = determinedBaseUrl; // Directly set _baseUrl
+      _logger.debug('TrayService: Derived Base URL: $determinedBaseUrl');
+      _baseUrl = determinedBaseUrl;
 
-      // Set status to online or appropriate logged-in status
-      _setStatus('online'); // Or whatever is appropriate for logged-in
+      _setStatus('online');
     } else {
-      debugPrint(
-        'TrayService: No existing token found on launch. Starting offline.',
-      );
+      _logger.warn('TrayService: No token found. Starting in offline mode.');
       _setStatus('offline');
     }
   }
 
   Future<void> _buildMenu() async {
-    final token =
-        await _secureStorage.readAccessToken(); // Check token for menu state
+    final token = await _secureStorage.readAccessToken();
 
-    Menu menu = Menu(
+    final menu = Menu(
       items: [
         MenuItem(key: 'status', label: 'Status: $_status', disabled: true),
         MenuItem.separator(),
-        MenuItem(key: 'online', label: 'Go Online'),
-        MenuItem(key: 'pause', label: 'Pause'),
-        MenuItem(key: 'break', label: 'Break'),
-        MenuItem(key: 'offline', label: 'Go Offline'),
+        MenuItem(
+          key: 'online',
+          label: 'Go Online',
+          disabled: _status == 'online',
+        ),
+        MenuItem(key: 'pause', label: 'Pause', disabled: _status == 'pause'),
+        MenuItem(key: 'break', label: 'Break', disabled: _status == 'break'),
+        MenuItem(
+          key: 'offline',
+          label: 'Go Offline',
+          disabled: _status == 'offline',
+        ),
         MenuItem.separator(),
         MenuItem(key: 'login', label: 'Login', disabled: token != null),
-        // Disable if logged in
         MenuItem(key: 'logout', label: 'Logout', disabled: token == null),
-        // Enable if logged in
         MenuItem.separator(),
         MenuItem(key: 'exit', label: 'Exit'),
       ],
@@ -110,13 +113,27 @@ class TrayService with TrayListener {
   }
 
   @override
-  void onTrayMenuItemClick(MenuItem menuItem) {
+  void onTrayMenuItemClick(MenuItem menuItem) async {
+    final agentID = await _secureStorage.readAgentId();
     switch (menuItem.key) {
       case 'online':
+        _socket?.setOnline(agentID ?? 0).catchError((e) {
+          _logger.error('Failed to go online', e);
+        });
+        break;
       case 'pause':
+        _socket
+            ?.setPause(agentId: agentID ?? 0, statusPayload: "Break")
+            .catchError((e) {
+              _logger.error('Failed to go break', e);
+            });
       case 'break':
-      case 'offline':
         _setStatus(menuItem.key!);
+        break;
+      case 'offline':
+        _socket?.setOffline(agentID ?? 0).catchError((e) {
+          _logger.error('Failed to go offline', e);
+        });
         break;
       case 'login':
         _login();
@@ -130,13 +147,14 @@ class TrayService with TrayListener {
   }
 
   void _setStatus(String status) async {
+    _logger.info('Setting status to $status');
+
     _status = status;
     _statusChangedAt = DateTime.now();
 
     await trayManager.setToolTip('Status: $_status');
     await trayManager.setIcon(_iconPathForStatus(status));
-
-    _buildMenu(); // Rebuild menu to reflect status change
+    await _buildMenu();
   }
 
   String _iconPathForStatus(String status) {
@@ -157,7 +175,7 @@ class TrayService with TrayListener {
       if (_statusChangedAt != null) {
         final elapsed = DateTime.now().difference(_statusChangedAt!);
         final formatted = _formatDuration(elapsed);
-        trayManager.setToolTip('$_status • $formatted');
+        await trayManager.setToolTip('$_status • $formatted');
       }
     });
   }
@@ -178,20 +196,18 @@ class TrayService with TrayListener {
 
   Future<void> _login() async {
     final token = await _secureStorage.readAccessToken();
-
     if (token != null) {
-      debugPrint('Login menu item clicked, but user is already logged in.');
-      // Optional: show a message to the user that they are already logged in.
-      return; // Stop here, don't show the WebView
+      _logger.warn('Login triggered, but token already exists.');
+      return;
     }
 
-    debugPrint('Login menu item clicked. No token found. Triggering WebView.');
-    onLogin?.call(); // This will launch the LoginWebView from main.dart
+    _logger.info('Triggering login UI via callback.');
+    onLogin?.call();
   }
 
   Future<void> _performLogoutApiCall(String url, String token) async {
     final api = Uri.parse('$url/api/logout');
-    debugPrint('Attempting API logout at: $api');
+    _logger.debug('Sending logout request to $api');
 
     try {
       final res = await http.post(
@@ -204,14 +220,14 @@ class TrayService with TrayListener {
       );
 
       if (res.statusCode >= 200 && res.statusCode < 300) {
-        debugPrint('API logout successful, status: ${res.statusCode}');
+        _logger.info('Logout API call successful: ${res.statusCode}');
       } else {
-        debugPrint(
-          'API logout failed with status: ${res.statusCode}, body: ${res.body}',
+        _logger.warn(
+          'Logout API call failed: ${res.statusCode}, body: ${res.body}',
         );
       }
-    } catch (e) {
-      debugPrint('ERROR: API logout request failed: $e');
+    } catch (e, stackTrace) {
+      _logger.error('Logout API request failed', e, stackTrace);
     }
   }
 
@@ -219,20 +235,22 @@ class TrayService with TrayListener {
     final token = await _secureStorage.readAccessToken();
 
     if (token != null && _baseUrl != null) {
-      debugPrint('Attempting server logout...');
+      _logger.debug('Performing server logout...');
       await _performLogoutApiCall(_baseUrl!, token);
     } else {
-      debugPrint(
-        'No token or base URL found for server logout. Performing local logout only.',
-      );
+      _logger.warn('No token or base URL. Only performing local logout.');
     }
 
-    // Always delete the token locally
-    await _secureStorage.deleteAccessToken(); // Corrected call with ()
-    debugPrint('Logged out. Token deleted locally.');
+    await _secureStorage.deleteAccessToken();
+    _logger.info('Token deleted locally, user logged out.');
 
-    _baseUrl = null; // Clear base URL on logout
-    _setStatus('offline'); // Set tray status to offline
-    _buildMenu(); // Rebuild menu to enable Login and disable Logout
+    _baseUrl = null;
+    _setStatus('offline');
+    await _buildMenu();
+  }
+
+  void dispose() {
+    _agentStatusSubscription?.cancel();
+    trayManager.removeListener(this);
   }
 }

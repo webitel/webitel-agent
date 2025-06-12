@@ -39,4 +39,21 @@ class SecureStorageService {
   Future<void> deleteAccessToken() async {
     await _storage.delete(key: 'token');
   }
+
+  /// Writes the agent ID (as a String) to secure storage.
+  Future<void> writeAgentId(int agentId) async {
+    await _storage.write(key: 'agent_id', value: agentId.toString());
+  }
+
+  /// Reads the agent ID from secure storage. Returns null if not found.
+  Future<int?> readAgentId() async {
+    final idStr = await _storage.read(key: 'agent_id');
+    if (idStr == null) return null;
+    return int.tryParse(idStr);
+  }
+
+  /// Deletes the agent ID from secure storage.
+  Future<void> deleteAgentId() async {
+    await _storage.delete(key: 'agent_id');
+  }
 }
