@@ -25,9 +25,7 @@ class WebitelSocket {
   final _agentStatusController = StreamController<AgentStatus>.broadcast();
   final _errorController = StreamController<SocketError>.broadcast();
   final _ackMessageController =
-      StreamController<
-        Map<String, dynamic>
-      >.broadcast(); // New: for "ack" message
+      StreamController<Map<String, dynamic>>.broadcast();
 
   final _pendingRequests = <int, Completer<Map<String, dynamic>>>{};
   final _outgoingQueue = Queue<_QueuedRequest>();
@@ -45,6 +43,10 @@ class WebitelSocket {
 
   Stream<SocketError> get errorStream => _errorController.stream;
 
+  /// Stream for "hello" acknowledgement messages
+  Stream<Map<String, dynamic>> get ackMessageStream =>
+      _ackMessageController.stream;
+
   /// Connect and listen
   Future<void> connect() async {
     logger.info('WebitelSocket: Connecting to ${config.url}');
@@ -55,6 +57,7 @@ class WebitelSocket {
       onDone: _onDone,
     );
     _isConnected = true;
+    _startConnectivityMonitoring();
   }
 
   Future<void> disconnect() async {
@@ -64,11 +67,13 @@ class WebitelSocket {
     await _channel.sink.close();
     _pendingRequests.clear();
     _outgoingQueue.clear();
+    await _connectivitySubscription.cancel();
   }
 
   Future<void> dispose() async {
     await _agentStatusController.close();
     await _errorController.close();
+    await _ackMessageController.close();
     await _wsSubscription.cancel();
     await _channel.sink.close();
     await _connectivitySubscription.cancel();
@@ -98,11 +103,9 @@ class WebitelSocket {
         } else if (typedData['status'] == 'FAIL') {
           final error = SocketError.fromJson(typedData['error'] ?? {});
           _errorController.add(error);
-
-          // Instead of completing with error (which throws when awaited),
-          // complete with a wrapper result indicating failure:
-          completer.complete({'error': error});
-          return;
+          completer.complete({
+            'error': error,
+          }); // Indicate failure to the caller
         } else {
           final error = SocketError.fromJson(typedData['error'] ?? {});
           _errorController.add(error);
@@ -119,11 +122,10 @@ class WebitelSocket {
         );
         completer.completeError(e, stack);
       }
-
       return;
     }
 
-    // ---- Handle pushed events (no seq_reply), like "agent_status" or "ack" ----
+    // ---- Handle pushed events (no seq_reply), like "agent_status" or "hello" ----
     if (event != null) {
       switch (event) {
         case 'agent_status':
@@ -141,7 +143,14 @@ class WebitelSocket {
             _agentStatusController.add(AgentStatus.unknown);
           }
           break;
-
+        case 'hello':
+          logger.info(
+            'WebitelSocket: Received "hello" acknowledgement: ${data['data']}',
+          );
+          _ackMessageController.add(
+            data,
+          ); // Add the full "hello" message to the stream
+          break;
         default:
           logger.debug('Unhandled event: $event');
       }
@@ -165,12 +174,86 @@ class WebitelSocket {
         code: 0,
       ),
     );
+    _reconnect();
   }
 
   void _onDone() {
     logger.warn('WebitelSocket: Connection closed.');
     _isConnected = false;
+    _reconnect();
   }
+
+  void _startConnectivityMonitoring() {
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
+      List<ConnectivityResult> results,
+    ) {
+      if (results.contains(ConnectivityResult.none)) {
+        logger.warn('WebitelSocket: No internet connectivity.');
+        _isConnected = false;
+      } else if (!_isConnected) {
+        logger.info(
+          'WebitelSocket: Internet connectivity restored. Attempting to reconnect.',
+        );
+        _reconnect();
+      }
+    });
+  }
+
+  Future<void> _reconnect() async {
+    if (_isConnected) {
+      logger.debug('WebitelSocket: Already connected, no need to reconnect.');
+      return;
+    }
+
+    // Prevent multiple concurrent reconnection attempts
+    if (_reconnecting) {
+      logger.debug('WebitelSocket: Reconnection in progress.');
+      return;
+    }
+
+    _reconnecting = true; // Set flag to indicate reconnection is in progress
+    logger.info('WebitelSocket: Attempting to reconnect in 5 seconds...');
+
+    try {
+      await Future.delayed(const Duration(seconds: 5));
+      if (!_isConnected) {
+        // Double-check in case connection was established by another trigger
+        await connect();
+        logger.info('WebitelSocket: Reconnected successfully.');
+
+        // --- IMPORTANT: RE-AUTHENTICATE AFTER RECONNECTION ---
+        try {
+          await authenticate();
+          logger.info('WebitelSocket: Re-authenticated successfully.');
+          // Optionally, re-fetch agent session or status if needed after auth
+          // await getAgentSession();
+        } catch (authError) {
+          logger.error('WebitelSocket: Re-authentication failed: $authError');
+          // If authentication fails, the reconnection is not truly successful.
+          // Trigger another reconnect attempt.
+          _isConnected = false; // Mark as disconnected so _reconnect can retry
+          _reconnecting = false; // Reset flag before re-calling
+          _reconnect();
+          return; // Exit current _reconnect cycle
+        }
+      }
+    } catch (e) {
+      logger.error('WebitelSocket: Reconnection failed: $e');
+      // If connection fails, trigger another reconnect attempt
+      _isConnected = false; // Ensure disconnected state
+      _reconnecting = false; // Reset flag before re-calling
+      _reconnect();
+      return; // Exit current _reconnect cycle
+    } finally {
+      // Only set _reconnecting to false if we are not immediately re-calling it due to auth failure
+      if (_reconnecting) {
+        _reconnecting = false;
+      }
+    }
+  }
+
+  // New flag to prevent multiple concurrent reconnection attempts
+  bool _reconnecting = false;
 
   Future<Map<String, dynamic>> request(
     String action, [
@@ -217,6 +300,10 @@ class WebitelSocket {
     final response = await request(SocketActions.authenticationChallenge, {
       'token': config.token,
     });
+    // Check if the response indicates an error from the server, e.g., 'status': 'FAIL'
+    if (response.containsKey('error')) {
+      throw Exception('Authentication failed: ${response['error']}');
+    }
     return AuthResponse.fromJson(response);
   }
 
@@ -248,6 +335,8 @@ class WebitelSocket {
     final res = await request(action, data);
     if (res['status'] != 'OK') {
       logger.error('Failed to set agent status: ${res['status']}');
+      // Optionally throw an error or handle the failure
+      // throw Exception('Failed to set agent status: ${res['status']}');
     }
 
     _agentStatusController.add(status);
