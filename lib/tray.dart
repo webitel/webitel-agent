@@ -26,14 +26,14 @@ class TrayService with TrayListener {
   String? _baseUrl;
 
   WebitelSocket? _socket;
-  StreamSubscription<String>? _agentStatusSubscription;
+  StreamSubscription<AgentStatus>? _agentStatusSubscription;
 
   void attachSocket(WebitelSocket socket) {
     _socket = socket;
     _agentStatusSubscription?.cancel();
     _agentStatusSubscription = _socket!.agentStatusStream.listen((status) {
       _logger.info('TrayService: Received agent status update: $status');
-      _setStatus(status);
+      _setStatus(status.name);
     });
   }
 
@@ -123,7 +123,7 @@ class TrayService with TrayListener {
         break;
       case 'pause':
         _socket
-            ?.setPause(agentId: agentID ?? 0, statusPayload: "Break")
+            ?.setPause(agentId: agentID ?? 0, payload: "Break", )
             .catchError((e) {
               _logger.error('Failed to go break', e);
             });

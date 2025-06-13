@@ -22,4 +22,13 @@ class AppConfig {
   static String get webitelWsUrl {
     return dotenv.env['WEBITEL_WS_URL'] ?? 'wss://dev.webitel.com/ws/websocket';
   }
+
+  static bool get logToFile {
+    final val = dotenv.env['LOG_TO_FILE'] ?? 'false';
+    return val.toLowerCase() == 'true';
+  }
+
+  static String get logFilePath {
+    return dotenv.env['LOG_FILE_PATH'] ?? 'logs/app.log';
+  }
 }
