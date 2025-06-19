@@ -6,6 +6,7 @@
 .env
 .DS_Store
 .atom/
+lib/ws/drafts.dart
 .build/
 .buildlog/
 .history

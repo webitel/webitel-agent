@@ -1,7 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:screen_capturer/screen_capturer.dart';
 import 'package:webitel_agent_flutter/presentation/main.dart';
 import 'package:webitel_agent_flutter/screenshot.dart';
+import 'package:webitel_agent_flutter/webrtc/config.dart';
+import 'package:webitel_agent_flutter/webrtc/stream_sender.dart';
 import 'package:webitel_agent_flutter/ws/config.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 
@@ -11,112 +15,161 @@ import 'login.dart';
 import 'storage.dart';
 import 'tray.dart';
 
-/// Main entry point for the Webitel Agent application
-/// --------------------------------------------------
-/// Initializes core services, handles authentication,
-/// and starts background processes before launching UI.
-void main() async {
-  // Initialize Flutter engine bindings
-  WidgetsFlutterBinding.ensureInitialized();
-
-  // Load environment variables from .env file
-  await dotenv.load(fileName: ".env");
-
-  // Initialize application logger
+Future<bool> performLoginFlow() async {
   final logger = LoggerService();
-
-  // Initialize secure storage for tokens and credentials
   final storage = SecureStorageService();
 
-  // ------------------------------
-  // SYSTEM TRAY INITIALIZATION
-  // ------------------------------
+  logger.debug('Launching login WebView...');
+  await navigatorKey.currentState?.push(
+    MaterialPageRoute(builder: (_) => LoginWebView(url: AppConfig.loginUrl)),
+  );
+
+  final token = await storage.readAccessToken();
+  if (token != null && token.isNotEmpty) {
+    final uri = Uri.parse(AppConfig.loginUrl);
+    final baseUrl =
+        '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}';
+    TrayService.instance.setBaseUrl(baseUrl);
+    return true;
+  }
+  logger.debug('Login canceled or failed');
+  return false;
+}
+
+Future<bool> checkAndRequestScreenCapturePermission() async {
+  if (defaultTargetPlatform == TargetPlatform.macOS) {
+    final allowed = await ScreenCapturer.instance.isAccessAllowed();
+    if (!allowed) {
+      await ScreenCapturer.instance.requestAccess(onlyOpenPrefPane: true);
+      logger.warn(
+        'Screen capture access not yet granted. User must enable it in System Preferences.',
+      );
+      return false;
+    }
+  }
+  return true;
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: ".env");
+
+  final logger = LoggerService();
+  final storage = SecureStorageService();
+
   await TrayService.instance.initTray();
 
-  /// Tray Login Callback
-  /// -------------------
-  /// Handles login initiation from system tray menu
-  TrayService.instance.onLogin = () async {
-    logger.debug('TrayService: Login initiated. Launching WebView...');
-
-    // Navigate to login web view
-    await navigatorKey.currentState?.push(
-      MaterialPageRoute(builder: (_) => LoginWebView(url: AppConfig.loginUrl)),
+  final screenCaptureAllowed = await checkAndRequestScreenCapturePermission();
+  if (!screenCaptureAllowed) {
+    logger.warn(
+      'Screen capture permission denied or not yet granted. Exiting app.',
     );
-
-    logger.debug('LoginWebView closed. Checking login status...');
-    final token = await storage.readAccessToken();
-
-    if (token != null) {
-      logger.debug('Login successful. Token found.');
-
-      // Derive base URL from login URL
-      final Uri loginUri = Uri.parse(AppConfig.loginUrl);
-      final String determinedBaseUrl =
-          '${loginUri.scheme}://${loginUri.host}${loginUri.hasPort ? ':${loginUri.port}' : ''}';
-
-      logger.debug('API Base URL determined: $determinedBaseUrl');
-      TrayService.instance.setBaseUrl(determinedBaseUrl);
-    } else {
-      logger.debug('Login canceled or failed. No token stored.');
-    }
-  };
-
-  // ------------------------------
-  // AUTHENTICATION CHECK
-  // ------------------------------
-  final token = await storage.readAccessToken();
-  if (token == null) {
-    logger.error('No authentication token found. User must login first.');
     return;
   }
 
-  // ------------------------------
-  // WEBSOCKET CONNECTION SETUP
-  // ------------------------------
+  TrayService.instance.onLogin = () async {
+    await performLoginFlow();
+  };
+
+  String? token = await storage.readAccessToken();
+
+  if (token == null || token.isEmpty) {
+    final loginSuccess = await performLoginFlow();
+    if (!loginSuccess) {
+      logger.warn('Login canceled, launching app with login screen only.');
+      runApp(const MyApp()); // Let user log in later via UI
+      return;
+    }
+    token = await storage.readAccessToken();
+  }
+
+  runApp(const MyApp()); // UI starts early
+  await initialize(token!); // Init services in background after login
+}
+
+Future<void> initialize(String token) async {
+  final logger = LoggerService();
+  final storage = SecureStorageService();
+
   final socket = WebitelSocket(
     config: WebitelSocketConfig(url: AppConfig.webitelWsUrl, token: token),
   );
 
-  // Establish WebSocket connection
   await socket.connect();
 
-  // Authenticate with Webitel services
-  await socket.authenticate();
+  Future<bool> authenticateSocket() async {
+    try {
+      await socket.authenticate();
+      return true;
+    } catch (e, stack) {
+      logger.error('[WebRTC] Authentication error: $e', stack);
+      return false;
+    }
+  }
 
-  // Retrieve agent session information
+  socket.onAuthenticationFailed = () async {
+    logger.warn('[WebRTC] Authentication failed, relogin required.');
+
+    await storage.deleteAccessToken();
+
+    final success = await performLoginFlow();
+    if (!success) return;
+
+    final newToken = await storage.readAccessToken();
+    if (newToken == null || newToken.isEmpty) return;
+
+    socket.updateToken(newToken);
+    final auth = await authenticateSocket();
+    if (!auth) return;
+  };
+
+  final authSuccess = await authenticateSocket();
+  if (!authSuccess) return;
+
   final agent = await socket.getAgentSession();
-
-  // Store agent ID for future use
   await storage.writeAgentId(agent.agentId);
-
-  // Set agent status to online
   await socket.setOnline(agent.agentId);
-
-  // Attach socket to tray service for status updates
   TrayService.instance.attachSocket(socket);
 
-  // ------------------------------
-  // SCREENSHOT SERVICE (OPTIONAL)
-  // ------------------------------
-  if (AppConfig.screenshotEnabled) {
-    logger.info('Initializing screenshot service...');
+  StreamSender? webrtcStream;
 
+  socket.onCallEvent(
+    onRinging: (callId) async {
+      logger.info('[WebRTC] Ringing event: $callId');
+      if (webrtcStream?.isStreaming == true) {
+        webrtcStream?.stop();
+      }
+
+      final webrtcConfig = WebRTCConfig.fromEnv();
+
+      webrtcStream = StreamSender(
+        id: callId,
+        token: token,
+        sdpResolverUrl: webrtcConfig.sdpUrl,
+        iceServers: AppConfig.webrtcIceServers,
+      );
+
+      try {
+        await webrtcStream!.start();
+        logger.info('[WebRTC] Stream started for $callId');
+      } catch (e, stack) {
+        logger.error('[WebRTC] Stream start failed: $e', stack);
+      }
+    },
+    onHangup: (callId) {
+      logger.info('[WebRTC] Hangup: $callId');
+      if (webrtcStream?.isStreaming == true) {
+        webrtcStream?.stop();
+        webrtcStream = null;
+      }
+    },
+  );
+
+  if (AppConfig.screenshotEnabled) {
     final screenshotService = ScreenshotSenderService(
       uploadUrl: AppConfig.mediaUploadUrl,
       interval: Duration(seconds: AppConfig.screenshotPeriodicitySec),
     );
-
-    // Start periodic screenshot capturing
     screenshotService.start();
-
-    logger.info(
-      'Screenshot service active (Interval: ${AppConfig.screenshotPeriodicitySec} seconds)',
-    );
   }
-
-  // ------------------------------
-  // APPLICATION LAUNCH
-  // ------------------------------
-  runApp(const MyApp());
 }

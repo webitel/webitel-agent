@@ -18,6 +18,8 @@ enum AgentStatus { online, offline, pause, unknown }
 class WebitelSocket {
   final WebitelSocketConfig config;
 
+  late String _token;
+
   late WebSocketChannel _channel;
   late StreamSubscription _wsSubscription;
   late StreamSubscription<List<ConnectivityResult>> _connectivitySubscription;
@@ -36,7 +38,13 @@ class WebitelSocket {
   bool _isConnected = false;
   bool _isSending = false;
 
-  WebitelSocket({required this.config});
+  void Function(String callId)? _onCallRinging;
+  void Function(String callId)? _onCallHangup;
+  void Function()? onAuthenticationFailed;
+
+  WebitelSocket({required this.config}) {
+    _token = config.token;
+  }
 
   /// Public Streams
   Stream<AgentStatus> get agentStatusStream => _agentStatusController.stream;
@@ -46,6 +54,11 @@ class WebitelSocket {
   /// Stream for "hello" acknowledgement messages
   Stream<Map<String, dynamic>> get ackMessageStream =>
       _ackMessageController.stream;
+
+  void updateToken(String newToken) {
+    _token = newToken;
+    logger.info('WebitelSocket: Token updated.');
+  }
 
   /// Connect and listen
   Future<void> connect() async {
@@ -151,10 +164,31 @@ class WebitelSocket {
             data,
           ); // Add the full "hello" message to the stream
           break;
+        case 'call':
+          final callData = data['data']?['call'];
+          final callEvent = callData?['event'];
+          final callId = callData?['id'];
+
+          logger.info('[WebitelSocket] Call event: $callEvent | id: $callId');
+
+          if (callEvent == 'ringing') {
+            _onCallRinging?.call(callId);
+          } else if (callEvent == 'hangup') {
+            _onCallHangup?.call(callId);
+          }
+          break;
         default:
           logger.debug('Unhandled event: $event');
       }
     }
+  }
+
+  void onCallEvent({
+    void Function(String callId)? onRinging,
+    void Function(String callId)? onHangup,
+  }) {
+    _onCallRinging = onRinging;
+    _onCallHangup = onHangup;
   }
 
   void _onError(dynamic error) {
@@ -298,12 +332,15 @@ class WebitelSocket {
   //--------------------------------
   Future<AuthResponse> authenticate() async {
     final response = await request(SocketActions.authenticationChallenge, {
-      'token': config.token,
+      'token': _token,
     });
-    // Check if the response indicates an error from the server, e.g., 'status': 'FAIL'
+
     if (response.containsKey('error')) {
-      throw Exception('Authentication failed: ${response['error']}');
+      if (onAuthenticationFailed != null) {
+        onAuthenticationFailed!();
+      }
     }
+
     return AuthResponse.fromJson(response);
   }
 
