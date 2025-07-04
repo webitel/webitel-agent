@@ -71,7 +71,15 @@ class _LoginWebViewState extends State<LoginWebView> {
               _logger.info('Logged in. Token stored.');
 
               if (mounted) {
-                Navigator.of(context).pop(); // Hide the WebView
+                if (tokenFromUrl != null && tokenFromUrl.isNotEmpty) {
+                  await _storage.writeAccessToken(tokenFromUrl);
+                  _logger.info('Logged in. Token stored.');
+
+                  if (mounted) {
+                    Navigator.of(context).pop(true);
+                  }
+                  return NavigationResponseAction.CANCEL;
+                }
               }
               return NavigationResponseAction.CANCEL; // Stop navigation
             } else {

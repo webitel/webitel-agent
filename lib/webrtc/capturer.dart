@@ -26,7 +26,6 @@ Future<MediaStream?> captureDesktopScreen() async {
       '[Capturer] Starting screen capture: width=$width, height=$height, frameRate=$frameRate',
     );
 
-    // final stream = await navigator.mediaDevices.getDisplayMedia(constraints);
     final stream = await mediaDevices.getDisplayMedia(constraints);
 
     logger.info('[Capturer] Screen capture started successfully');

@@ -5,13 +5,13 @@ import 'package:webitel_agent_flutter/webrtc/signaling.dart';
 import 'capturer.dart';
 import 'peer_connection.dart';
 
-final logger = LoggerService();
-
 class StreamSender {
   final String id;
   final String token;
   final String sdpResolverUrl;
   final List<Map<String, dynamic>> iceServers;
+
+  final logger = LoggerService();
 
   RTCPeerConnection? pc;
   MediaStream? stream;

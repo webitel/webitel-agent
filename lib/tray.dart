@@ -28,6 +28,10 @@ class TrayService with TrayListener {
   WebitelSocket? _socket;
   StreamSubscription<AgentStatus>? _agentStatusSubscription;
 
+  void updateStatus(String status) {
+    _setStatus(status);
+  }
+
   void attachSocket(WebitelSocket socket) {
     _socket = socket;
     _agentStatusSubscription?.cancel();
@@ -73,27 +77,41 @@ class TrayService with TrayListener {
 
   Future<void> _buildMenu() async {
     final token = await _secureStorage.readAccessToken();
+    final isAuthorized = token != null && token.isNotEmpty;
 
     final menu = Menu(
       items: [
         MenuItem(key: 'status', label: 'Status: $_status', disabled: true),
         MenuItem.separator(),
+
         MenuItem(
           key: 'online',
           label: 'Go Online',
-          disabled: _status == 'online',
+          disabled: !isAuthorized || _status == 'online',
         ),
-        MenuItem(key: 'pause', label: 'Pause', disabled: _status == 'pause'),
-        MenuItem(key: 'break', label: 'Break', disabled: _status == 'break'),
+        MenuItem(
+          key: 'pause',
+          label: 'Pause',
+          disabled: !isAuthorized || _status == 'pause',
+        ),
+        MenuItem(
+          key: 'break',
+          label: 'Break',
+          disabled: !isAuthorized || _status == 'break',
+        ),
         MenuItem(
           key: 'offline',
           label: 'Go Offline',
-          disabled: _status == 'offline',
+          disabled: !isAuthorized || _status == 'offline',
         ),
+
         MenuItem.separator(),
-        MenuItem(key: 'login', label: 'Login', disabled: token != null),
-        MenuItem(key: 'logout', label: 'Logout', disabled: token == null),
+
+        MenuItem(key: 'login', label: 'Login', disabled: isAuthorized),
+        MenuItem(key: 'logout', label: 'Logout', disabled: !isAuthorized),
+
         MenuItem.separator(),
+
         MenuItem(key: 'exit', label: 'Exit'),
       ],
     );
@@ -122,11 +140,11 @@ class TrayService with TrayListener {
         });
         break;
       case 'pause':
-        _socket
-            ?.setPause(agentId: agentID ?? 0, payload: "Break", )
-            .catchError((e) {
-              _logger.error('Failed to go break', e);
-            });
+        _socket?.setPause(agentId: agentID ?? 0, payload: "Break").catchError((
+          e,
+        ) {
+          _logger.error('Failed to go break', e);
+        });
       case 'break':
         _setStatus(menuItem.key!);
         break;
