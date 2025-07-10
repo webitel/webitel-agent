@@ -19,22 +19,47 @@ dependencies:
   web_socket_channel: ^3.0.3
   path_provider: ^2.1.5
   screen_capturer: ^0.2.3
-  logger: ^2.5.0
+  logger: ^2.6.0
   connectivity_plus: ^6.1.4
   retry: ^3.1.2
-  flutter_webrtc: ^0.14.1
+  flutter_webrtc: ^0.14.2
+  flutter_svg: ^2.2.0
+
+
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_gen_runner: ^5.10.0
+  flutter_lints: ^6.0.0
+  build_runner: ^2.5.4
 
-  flutter_lints: ^5.0.0
+
+
+flutter_gen:
+  output: lib/gen/
+  assets:
+    enabled: true
+    outputs:
+      class_name: Assets
+  fonts:
+    enabled: true
 
 
 flutter:
-
   uses-material-design: true
-
   assets:
-    - assets/
+    - assets/icons/
     - .env
+
+  fonts:
+    - family: montserrat
+      fonts:
+        - asset: assets/fonts/montserrat/static/montserrat-Regular.ttf
+        - asset: assets/fonts/montserrat/static/montserrat-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/montserrat/static/montserrat-Italic.ttf
+          style: italic
+
+
+

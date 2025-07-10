@@ -1,10 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 
-import 'package:http/http.dart' as http;
 import 'package:tray_manager/tray_manager.dart';
 import 'package:webitel_agent_flutter/config.dart';
+import 'package:webitel_agent_flutter/gen/assets.gen.dart';
 import 'package:webitel_agent_flutter/storage.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 
@@ -76,43 +74,11 @@ class TrayService with TrayListener {
   }
 
   Future<void> _buildMenu() async {
-    final token = await _secureStorage.readAccessToken();
-    final isAuthorized = token != null && token.isNotEmpty;
-
     final menu = Menu(
       items: [
         MenuItem(key: 'status', label: 'Status: $_status', disabled: true),
         MenuItem.separator(),
-
-        MenuItem(
-          key: 'online',
-          label: 'Go Online',
-          disabled: !isAuthorized || _status == 'online',
-        ),
-        MenuItem(
-          key: 'pause',
-          label: 'Pause',
-          disabled: !isAuthorized || _status == 'pause',
-        ),
-        MenuItem(
-          key: 'break',
-          label: 'Break',
-          disabled: !isAuthorized || _status == 'break',
-        ),
-        MenuItem(
-          key: 'offline',
-          label: 'Go Offline',
-          disabled: !isAuthorized || _status == 'offline',
-        ),
-
-        MenuItem.separator(),
-
-        MenuItem(key: 'login', label: 'Login', disabled: isAuthorized),
-        MenuItem(key: 'logout', label: 'Logout', disabled: !isAuthorized),
-
-        MenuItem.separator(),
-
-        MenuItem(key: 'exit', label: 'Exit'),
+        MenuItem(key: 'upload_config', label: 'Upload Configuration'),
       ],
     );
 
@@ -130,40 +96,6 @@ class TrayService with TrayListener {
     trayManager.popUpContextMenu();
   }
 
-  @override
-  void onTrayMenuItemClick(MenuItem menuItem) async {
-    final agentID = await _secureStorage.readAgentId();
-    switch (menuItem.key) {
-      case 'online':
-        _socket?.setOnline(agentID ?? 0).catchError((e) {
-          _logger.error('Failed to go online', e);
-        });
-        break;
-      case 'pause':
-        _socket?.setPause(agentId: agentID ?? 0, payload: "Break").catchError((
-          e,
-        ) {
-          _logger.error('Failed to go break', e);
-        });
-      case 'break':
-        _setStatus(menuItem.key!);
-        break;
-      case 'offline':
-        _socket?.setOffline(agentID ?? 0).catchError((e) {
-          _logger.error('Failed to go offline', e);
-        });
-        break;
-      case 'login':
-        _login();
-        break;
-      case 'logout':
-        _logout();
-        break;
-      case 'exit':
-        exit(0);
-    }
-  }
-
   void _setStatus(String status) async {
     _logger.info('Setting status to $status');
 
@@ -178,12 +110,13 @@ class TrayService with TrayListener {
   String _iconPathForStatus(String status) {
     switch (status) {
       case 'online':
-        return 'assets/green.svg';
+        return Assets.icons.wtCaptureOnline;
       case 'pause':
+        return Assets.icons.wtCapturePause;
       case 'break':
-        return 'assets/warn.svg';
+        return Assets.icons.wtCapturePause;
       default:
-        return 'assets/red.svg';
+        return Assets.icons.wtCaptureOffline;
     }
   }
 
@@ -210,61 +143,6 @@ class TrayService with TrayListener {
     return '${h.toString().padLeft(2, '0')}:'
         '${m.toString().padLeft(2, '0')}:'
         '${s.toString().padLeft(2, '0')}';
-  }
-
-  Future<void> _login() async {
-    final token = await _secureStorage.readAccessToken();
-    if (token != null) {
-      _logger.warn('Login triggered, but token already exists.');
-      return;
-    }
-
-    _logger.info('Triggering login UI via callback.');
-    onLogin?.call();
-  }
-
-  Future<void> _performLogoutApiCall(String url, String token) async {
-    final api = Uri.parse('$url/api/logout');
-    _logger.debug('Sending logout request to $api');
-
-    try {
-      final res = await http.post(
-        api,
-        headers: {
-          "Content-Type": "application/json",
-          "x-webitel-access": token,
-        },
-        body: jsonEncode({}),
-      );
-
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        _logger.info('Logout API call successful: ${res.statusCode}');
-      } else {
-        _logger.warn(
-          'Logout API call failed: ${res.statusCode}, body: ${res.body}',
-        );
-      }
-    } catch (e, stackTrace) {
-      _logger.error('Logout API request failed', e, stackTrace);
-    }
-  }
-
-  Future<void> _logout() async {
-    final token = await _secureStorage.readAccessToken();
-
-    if (token != null && _baseUrl != null) {
-      _logger.debug('Performing server logout...');
-      await _performLogoutApiCall(_baseUrl!, token);
-    } else {
-      _logger.warn('No token or base URL. Only performing local logout.');
-    }
-
-    await _secureStorage.deleteAccessToken();
-    _logger.info('Token deleted locally, user logged out.');
-
-    _baseUrl = null;
-    _setStatus('offline');
-    await _buildMenu();
   }
 
   void dispose() {
