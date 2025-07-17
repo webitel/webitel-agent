@@ -5,7 +5,7 @@ import 'package:webitel_agent_flutter/logger.dart';
 final logger = LoggerService();
 
 class ScreenCaptureWidget extends StatefulWidget {
-  const ScreenCaptureWidget({Key? key}) : super(key: key);
+  const ScreenCaptureWidget({super.key});
 
   @override
   State<ScreenCaptureWidget> createState() => _ScreenCaptureWidgetState();
@@ -24,7 +24,6 @@ class _ScreenCaptureWidgetState extends State<ScreenCaptureWidget> {
   Future<void> _initializeRendererAndStartCapture() async {
     await _renderer.initialize();
 
-    // Твої параметри захоплення
     final constraints = {
       'video': {
         'displaySurface': 'window',
@@ -41,7 +40,6 @@ class _ScreenCaptureWidgetState extends State<ScreenCaptureWidget> {
         _screenStream = stream;
       });
     } catch (e) {
-      // Логування помилки
       print('Error capturing screen: $e');
     }
   }

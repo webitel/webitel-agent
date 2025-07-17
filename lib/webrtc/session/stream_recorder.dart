@@ -1,11 +1,10 @@
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_agent_flutter/logger.dart';
-import 'package:webitel_agent_flutter/webrtc/signaling.dart';
+import 'package:webitel_agent_flutter/webrtc/core/capturer.dart';
+import 'package:webitel_agent_flutter/webrtc/core/peer_connection.dart';
+import 'package:webitel_agent_flutter/webrtc/core/signaling.dart';
 
-import 'capturer.dart';
-import 'peer_connection.dart';
-
-class StreamSender {
+class StreamRecorder {
   final String id;
   final String token;
   final String sdpResolverUrl;
@@ -18,7 +17,7 @@ class StreamSender {
 
   bool get isStreaming => pc != null && stream != null;
 
-  StreamSender({
+  StreamRecorder({
     required this.id,
     required this.token,
     required this.sdpResolverUrl,
@@ -26,16 +25,16 @@ class StreamSender {
   });
 
   Future<void> start() async {
-    logger.info('[StreamSender] Starting stream sender for call $id');
+    logger.info('[StreamRecorder] Starting stream sender for call $id');
 
     pc = await createPeerConnectionWithConfig(iceServers);
 
     pc!.onIceConnectionState = (state) {
-      logger.debug('[StreamSender] ICE connection state: $state');
+      logger.debug('[StreamRecorder] ICE connection state: $state');
       if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
           state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
         logger.warn(
-          '[StreamSender] ICE disconnected/failed, stopping stream...',
+          '[StreamRecorder] ICE disconnected/failed, stopping stream...',
         );
         stop();
       }
@@ -43,7 +42,7 @@ class StreamSender {
 
     stream = await captureDesktopScreen();
     if (stream == null) {
-      logger.error('[StreamSender] Could not capture screen');
+      logger.error('[StreamRecorder] Could not capture screen');
       throw Exception('Screen capture failed');
     }
 
@@ -53,7 +52,7 @@ class StreamSender {
 
     final offer = await pc!.createOffer();
     await pc!.setLocalDescription(offer);
-    logger.debug('[StreamSender] Created SDP offer');
+    logger.debug('[StreamRecorder] Created SDP offer');
 
     final localDescription = await pc!.getLocalDescription();
 
@@ -69,13 +68,13 @@ class StreamSender {
     );
 
     await pc!.setRemoteDescription(remoteSdp);
-    logger.info('[StreamSender] Set remote SDP, streaming started');
+    logger.info('[StreamRecorder] Set remote SDP, streaming started');
   }
 
   void stop() {
-    logger.info('[StreamSender] Stopping stream sender...');
+    logger.info('[StreamRecorder] Stopping stream sender...');
     stream?.getTracks().forEach((t) {
-      logger.debug('[StreamSender] Stopping track: ${t.kind}');
+      logger.debug('[StreamRecorder] Stopping track: ${t.kind}');
       t.stop();
     });
 
@@ -83,7 +82,7 @@ class StreamSender {
 
     if (pc != null) {
       pc!.close();
-      logger.debug('[StreamSender] Closed peer connection');
+      logger.debug('[StreamRecorder] Closed peer connection');
       pc = null;
     }
   }

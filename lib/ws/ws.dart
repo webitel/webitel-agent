@@ -3,8 +3,12 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:webitel_agent_flutter/logger.dart';
+import 'package:webitel_agent_flutter/webrtc/core/capturer.dart'
+    show captureDesktopScreen;
+import 'package:webitel_agent_flutter/webrtc/session/screen_streamer.dart';
 import 'package:webitel_agent_flutter/ws/config.dart';
 import 'package:webitel_agent_flutter/ws/constants.dart';
 import 'package:webitel_agent_flutter/ws/model/agent.dart';
@@ -12,6 +16,7 @@ import 'package:webitel_agent_flutter/ws/model/auth.dart';
 import 'package:webitel_agent_flutter/ws/model/user.dart';
 
 import 'model/ws_error.dart';
+import 'ws_events.dart';
 
 enum AgentStatus { online, offline, pause, unknown }
 
@@ -41,6 +46,14 @@ class WebitelSocket {
   void Function(String callId)? _onCallRinging;
   void Function(String callId)? _onCallHangup;
   void Function()? onAuthenticationFailed;
+
+  ScreenStreamer? _screenCapturer;
+
+  void Function(MediaStream stream)? onStreamReceived;
+
+  void setOnScreenStream(void Function(MediaStream stream) callback) {
+    onStreamReceived = callback;
+  }
 
   WebitelSocket({required this.config}) {
     _token = config.token;
@@ -92,37 +105,36 @@ class WebitelSocket {
     await _connectivitySubscription.cancel();
   }
 
-  void _onMessage(dynamic message) {
+  void _onMessage(dynamic message) async {
     logger.debug('WebitelSocket: Received message: $message');
 
     final Map<String, dynamic> data = jsonDecode(message);
     final replySeq = data['seq_reply'];
-    final event = data['event'];
+    final event = fromString(data['event']);
 
-    // ---- Handle replies to requests (using seq_reply) ----
+    // ---- Handle replies to requests ----
     if (replySeq != null && _pendingRequests.containsKey(replySeq)) {
       final completer = _pendingRequests.remove(replySeq)!;
 
       try {
         final typedData = Map<String, dynamic>.from(data);
+        final status = typedData['status'];
 
-        if (typedData['status'] == 'OK') {
+        if (status == 'OK') {
           final responseData = typedData['data'];
           if (responseData is Map && responseData.isNotEmpty) {
             completer.complete(Map<String, dynamic>.from(responseData));
           } else {
             completer.complete(typedData);
           }
-        } else if (typedData['status'] == 'FAIL') {
-          final error = SocketError.fromJson(typedData['error'] ?? {});
-          _errorController.add(error);
-          completer.complete({
-            'error': error,
-          }); // Indicate failure to the caller
         } else {
           final error = SocketError.fromJson(typedData['error'] ?? {});
           _errorController.add(error);
-          completer.completeError(error);
+          if (status == 'FAIL') {
+            completer.complete({'error': error});
+          } else {
+            completer.completeError(error);
+          }
         }
       } catch (e, stack) {
         _errorController.add(
@@ -138,49 +150,123 @@ class WebitelSocket {
       return;
     }
 
-    // ---- Handle pushed events (no seq_reply), like "agent_status" or "hello" ----
-    if (event != null) {
-      switch (event) {
-        case 'agent_status':
-          final agentData = data['data'] ?? {};
-          final status = agentData['status'];
+    // ---- Handle pushed events ----
+    switch (event) {
+      case WebSocketEvent.agentStatus:
+        final agentData = data['data'] ?? {};
+        final status = agentData['status'];
 
-          if (status == 'online') {
-            _agentStatusController.add(AgentStatus.online);
-          } else if (status == 'offline') {
-            _agentStatusController.add(AgentStatus.offline);
-          } else if (status == 'pause') {
-            _agentStatusController.add(AgentStatus.pause);
-          } else {
-            logger.warn('Unknown agent status received: $status');
-            _agentStatusController.add(AgentStatus.unknown);
-          }
-          break;
-        case 'hello':
-          logger.info(
-            'WebitelSocket: Received "hello" acknowledgement: ${data['data']}',
-          );
-          _ackMessageController.add(
-            data,
-          ); // Add the full "hello" message to the stream
-          break;
-        case 'call':
-          final callData = data['data']?['call'];
-          final callEvent = callData?['event'];
-          final callId = callData?['id'];
+        final AgentStatus agentStatus = switch (status) {
+          'online' => AgentStatus.online,
+          'offline' => AgentStatus.offline,
+          'pause' => AgentStatus.pause,
+          _ => AgentStatus.unknown,
+        };
 
-          logger.info('[WebitelSocket] Call event: $callEvent | id: $callId');
+        _agentStatusController.add(agentStatus);
+        if (agentStatus == AgentStatus.unknown) {
+          logger.warn('Unknown agent status received: $status');
+        }
+        break;
 
-          if (callEvent == 'ringing') {
+      case WebSocketEvent.hello:
+        logger.info('WebitelSocket: Received "hello": ${data['data']}');
+        _ackMessageController.add(data);
+        break;
+
+      case WebSocketEvent.call:
+        final callData = data['data']?['call'];
+        final callEvent = callData?['event'];
+        final callId = callData?['id'];
+
+        logger.info('[WebitelSocket] Call event: $callEvent | id: $callId');
+
+        switch (callEvent) {
+          case 'ringing':
             _onCallRinging?.call(callId);
-          } else if (callEvent == 'hangup') {
+            break;
+          case 'hangup':
             _onCallHangup?.call(callId);
-          }
-          break;
-        default:
-          logger.debug('Unhandled event: $event');
+            break;
+          default:
+            logger.debug('[WebitelSocket] Unhandled call event: $callEvent');
+        }
+        break;
+
+      case WebSocketEvent.notification:
+        await _handleNotification(data['data']?['notification']);
+        break;
+
+      case WebSocketEvent.unknown:
+        final eventName = data['event'];
+        logger.debug('WebitelSocket: Unhandled event: $eventName');
+        break;
+    }
+  }
+
+  Future<void> _handleNotification(Map<String, dynamic>? notif) async {
+    if (notif == null) return;
+
+    final action = notif['action'];
+    final body = notif['body'] as Map<String, dynamic>?;
+
+    if (action == 'screen_share' && body != null) {
+      final sdp = body['sdp'] as String?;
+      final parentId = body['parent_id'] as String?;
+      final fromUserId = body['from_user_id'];
+      final sockId = body['sock_id'];
+
+      if (sdp != null && parentId != null) {
+        logger.info(
+          '[WebitelSocket] screen_share received, parent_id=$parentId',
+        );
+
+        _screenCapturer?.close('new screen_share');
+        final localStream = await captureDesktopScreen();
+        _screenCapturer = ScreenStreamer(
+          id: parentId,
+          peerSdp: sdp,
+          iceServers: [],
+          logger: logger,
+          localStream: localStream,
+          onTrack: (MediaStream stream) {
+            logger.info('[WebitelSocket] Screen stream received!');
+            onStreamReceived?.call(stream);
+          },
+          onClose: () {
+            logger.info('[WebitelSocket] Screen stream closed');
+          },
+        );
+
+        await _screenCapturer!.start();
+        var answer = await _screenCapturer!.localDescription;
+        if (answer != null) {
+          final filteredSdp = filterSdp(answer.sdp ?? '');
+          answer = RTCSessionDescription(filteredSdp, answer.type);
+
+          // final sessionId = Uuid().v4();
+          await request('ss_accept', {
+            'id': notif['id'],
+            'sdp': answer.sdp,
+            'to_user_id': fromUserId,
+            'sock_id': sockId,
+            'session_id': parentId,
+          });
+        } else {
+          logger.error(
+            '[WebitelSocket] localDescription is null after start()',
+          );
+        }
       }
     }
+  }
+
+  String filterSdp(String sdp) {
+    // Only filter problematic lines, keep ICE candidates
+    return sdp
+        .split('\n')
+        .where((line) => !line.contains('0.0.0.0') && !line.contains('::1'))
+        .join('\n');
   }
 
   void onCallEvent({

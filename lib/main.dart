@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:screen_capturer/screen_capturer.dart';
 import 'package:webitel_agent_flutter/config.dart';
 import 'package:webitel_agent_flutter/logger.dart';
 import 'package:webitel_agent_flutter/login.dart';
@@ -9,8 +11,8 @@ import 'package:webitel_agent_flutter/presentation/page/main.dart';
 import 'package:webitel_agent_flutter/screenshot.dart';
 import 'package:webitel_agent_flutter/storage.dart';
 import 'package:webitel_agent_flutter/tray.dart';
-import 'package:webitel_agent_flutter/webrtc/config.dart';
-import 'package:webitel_agent_flutter/webrtc/stream_sender.dart';
+import 'package:webitel_agent_flutter/webrtc/core/config.dart';
+import 'package:webitel_agent_flutter/webrtc/session/stream_recorder.dart';
 import 'package:webitel_agent_flutter/ws/config.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 
@@ -20,24 +22,40 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
 
-  // final logger = LoggerService();
-  // final storage = SecureStorageService();
+  final logger = LoggerService();
+  final storage = SecureStorageService();
 
   // -------- Initialize system tray and its menu --------
   await TrayService.instance.initTray();
 
-  // Uncomment and enable if screen capture permissions are necessary
   // final screenCaptureAllowed = await checkAndRequestScreenCapturePermission();
   // if (!screenCaptureAllowed) {
-  //   logger.warn('Screen capture permission denied or not granted. Exiting app.');
+  //   logger.warn(
+  //     'Screen capture permission denied or not granted. Exiting app.',
+  //   );
   //   return;
   // }
 
-  // -------- Start the main UI --------
-  runApp(MyApp());
-
   // -------- Perform async startup tasks such as login and service initialization --------
   await appStartupFlow();
+
+  // -------- Start the main UI --------
+  runApp(MyApp());
+}
+
+Future<bool> checkAndRequestScreenCapturePermission() async {
+  final logger = LoggerService();
+  if (defaultTargetPlatform == TargetPlatform.macOS) {
+    final allowed = await ScreenCapturer.instance.isAccessAllowed();
+    if (!allowed) {
+      await ScreenCapturer.instance.requestAccess(onlyOpenPrefPane: true);
+      logger.warn(
+        'Screen capture access not yet granted. User must enable it in System Preferences.',
+      );
+      return false;
+    }
+  }
+  return true;
 }
 
 // -------- Waits until the navigator is ready for navigation operations --------
@@ -167,7 +185,7 @@ Future<void> initialize(String token) async {
   // -------- Attach socket to tray for status updates --------
   TrayService.instance.attachSocket(socket);
 
-  StreamSender? webrtcStream;
+  StreamRecorder? webrtcStream;
 
   // -------- WebRTC call event handling --------
   socket.onCallEvent(
@@ -178,7 +196,7 @@ Future<void> initialize(String token) async {
 
       final webrtcConfig = WebRTCConfig.fromEnv();
 
-      webrtcStream = StreamSender(
+      webrtcStream = StreamRecorder(
         id: callId,
         token: token,
         sdpResolverUrl: webrtcConfig.sdpUrl,
