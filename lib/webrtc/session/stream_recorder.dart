@@ -41,12 +41,22 @@ class StreamRecorder {
     };
 
     stream = await captureDesktopScreen();
+
     if (stream == null) {
       logger.error('[StreamRecorder] Could not capture screen');
       throw Exception('Screen capture failed');
     }
 
     for (var track in stream!.getTracks()) {
+      final settings = track.getSettings();
+
+      logger.debug(
+        '[Capturer] Track settings: '
+        'width=${settings['width']}, '
+        'height=${settings['height']}, '
+        'frameRate=${settings['frameRate']}',
+      );
+
       pc!.addTrack(track, stream!);
     }
 

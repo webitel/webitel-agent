@@ -13,10 +13,6 @@ class AppConfig {
     return val.toLowerCase() == 'true';
   }
 
-  static int get screenshotPeriodicitySec {
-    return int.tryParse(dotenv.env['SCREENSHOT_PERIODICITY_SEC'] ?? '') ?? 90;
-  }
-
   static String get mediaUploadUrl {
     return dotenv.env['MEDIA_UPLOAD_URL'] ?? 'https://dev.webitel.com';
   }

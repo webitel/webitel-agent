@@ -13,14 +13,17 @@ Future<MediaStream?> captureDesktopScreen() async {
     'video': {
       'displaySurface': 'monitor',
       'mandatory': {
-        'maxWidth': width,
-        'maxHeight': height,
-        'maxFrameRate': frameRate,
+        'maxWidth': width + 10,
+        'minWidth': width - 10,
+        'maxHeight': height + 10,
+        'minHeight': height - 10,
+        'maxFramerate': frameRate,
+        'frameRate': 30.0,
       },
     },
     'audio': false,
   };
-
+  
   try {
     logger.info(
       '[Capturer] Starting screen capture: width=$width, height=$height, frameRate=$frameRate',

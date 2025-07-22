@@ -2,31 +2,85 @@ import 'dart:async';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_agent_flutter/logger.dart';
+import 'package:webitel_agent_flutter/webrtc/core/capturer.dart';
 
-typedef OnTrackReceived = void Function(MediaStream stream);
 typedef OnReceiverClosed = void Function();
+typedef OnAccept =
+    Future<void> Function(String event, Map<String, dynamic> payload);
 
 class ScreenStreamer {
   final String id;
   final String peerSdp;
   final List<Map<String, dynamic>> iceServers;
-  final OnTrackReceived onTrack;
   final OnReceiverClosed onClose;
   final LoggerService logger;
   final MediaStream? localStream;
+  final OnAccept onAccept;
 
   RTCPeerConnection? _pc;
-  Timer? _keepAliveTimer;
 
   ScreenStreamer({
     required this.id,
     required this.peerSdp,
     required this.iceServers,
-    required this.onTrack,
     required this.onClose,
     required this.logger,
+    required this.onAccept,
     this.localStream,
   });
+
+  /// Factory method to build from screen_share notification
+  static Future<ScreenStreamer> fromNotification({
+    required Map<String, dynamic> notif,
+    required LoggerService logger,
+    required OnReceiverClosed onClose,
+    required OnAccept onAccept,
+  }) async {
+    final body = notif['body'] as Map<String, dynamic>?;
+
+    final sdp = body?['sdp'] as String?;
+    final parentId = body?['parent_id'] as String?;
+    final fromUserId = body?['from_user_id'];
+    final sockId = body?['sock_id'];
+
+    if (sdp == null || parentId == null) {
+      throw ArgumentError(
+        'Invalid screen_share notification: missing sdp or parentId',
+      );
+    }
+
+    logger.info('[ScreenStreamer] screen_share received, parent_id=$parentId');
+
+    final localStream = await captureDesktopScreen();
+
+    final screenStreamer = ScreenStreamer(
+      id: parentId,
+      peerSdp: sdp,
+      iceServers: [],
+      logger: logger,
+      localStream: localStream,
+      onClose: onClose,
+      onAccept: onAccept,
+    );
+
+    await screenStreamer.start();
+
+    final answer = await screenStreamer.localDescription;
+    if (answer == null) {
+      logger.error('[ScreenStreamer] localDescription is null after start()');
+      return screenStreamer;
+    }
+
+    await onAccept('ss_accept', {
+      'id': notif['id'],
+      'sdp': answer.sdp,
+      'to_user_id': fromUserId,
+      'sock_id': sockId,
+      'session_id': parentId,
+    });
+
+    return screenStreamer;
+  }
 
   Future<void> start() async {
     logger.info('[ScreenStreamer] Starting peer connection for id: $id');
@@ -34,22 +88,11 @@ class ScreenStreamer {
     try {
       // Create peer connection
       // In peer connection configuration:
-      _pc = await createPeerConnection({
-        'iceServers': iceServers,
-        'iceTransportPolicy': 'all',
-        'iceCandidatePoolSize': 5,
-        'bundlePolicy': 'max-bundle',
-        'rtcpMuxPolicy': 'require',
-      });
+      _pc = await createPeerConnection({'iceServers': iceServers});
 
       await _pc!.setConfiguration({
         'iceServers': iceServers,
         'sdpSemantics': 'unified-plan',
-        'bweConfiguration': {
-          'minBitrate': 500000,
-          'maxBitrate': 3000000,
-          'startBitrate': 1000000,
-        },
       });
 
       logger.debug('[ScreenStreamer] Peer connection created');
@@ -131,52 +174,6 @@ class ScreenStreamer {
       logger.error('ICE restart failed: $e');
     }
   }
-
-  Future<void> restartSession() async {
-    logger.info('[ScreenStreamer] Restarting session for id: $id');
-    await _pc?.close();
-    _pc = null;
-
-    // Optional: fetch a new offer from the signaling server
-    // If peerSdp changes dynamically, you'll need to request a new one here
-
-    await start(); // Recreate everything from scratch
-  }
-
-  // Future<void> start() async {
-  //   logger.info('[ScreenStreamer] Starting peer connection');
-  //
-  //   // Create peer connection
-  //   _pc = await createPeerConnection({'iceServers': iceServers});
-  //
-  //   // Set remote SDP offer
-  //   await _pc!.setRemoteDescription(RTCSessionDescription(peerSdp, 'offer'));
-  //   logger.info('[ScreenStreamer] Remote SDP offer set');
-  //
-  //   // Add local tracks (e.g., desktop screen)
-  //   if (localStream != null) {
-  //     for (var track in localStream!.getTracks()) {
-  //       await _pc!.addTrack(track, localStream!);
-  //       logger.info('[ScreenStreamer] Added local track: ${track.kind}');
-  //     }
-  //   }
-  //
-  //   _pc!.onIceConnectionState = (state) {
-  //     logger.debug('[ScreenStreamer] ICE connection state: $state');
-  //     if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
-  //         state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
-  //       logger.warn(
-  //         '[ScreenStreamer] ICE disconnected/failed, closing receiver...',
-  //       );
-  //       close('ICE disconnected/failed');
-  //     }
-  //   };
-  //
-  //   // Create and set local SDP answer
-  //   final RTCSessionDescription answer = await _pc!.createAnswer();
-  //   await _pc!.setLocalDescription(answer);
-  //   logger.info('[ScreenStreamer] Created and set local SDP answer');
-  // }
 
   Future<RTCSessionDescription?>? get localDescription =>
       _pc?.getLocalDescription();

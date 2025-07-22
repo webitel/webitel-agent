@@ -3,17 +3,13 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:webitel_agent_flutter/logger.dart';
-import 'package:webitel_agent_flutter/webrtc/core/capturer.dart'
-    show captureDesktopScreen;
 import 'package:webitel_agent_flutter/webrtc/session/screen_streamer.dart';
 import 'package:webitel_agent_flutter/ws/config.dart';
 import 'package:webitel_agent_flutter/ws/constants.dart';
 import 'package:webitel_agent_flutter/ws/model/agent.dart';
 import 'package:webitel_agent_flutter/ws/model/auth.dart';
-import 'package:webitel_agent_flutter/ws/model/user.dart';
 
 import 'model/ws_error.dart';
 import 'ws_events.dart';
@@ -48,12 +44,6 @@ class WebitelSocket {
   void Function()? onAuthenticationFailed;
 
   ScreenStreamer? _screenCapturer;
-
-  void Function(MediaStream stream)? onStreamReceived;
-
-  void setOnScreenStream(void Function(MediaStream stream) callback) {
-    onStreamReceived = callback;
-  }
 
   WebitelSocket({required this.config}) {
     _token = config.token;
@@ -194,7 +184,17 @@ class WebitelSocket {
         break;
 
       case WebSocketEvent.notification:
-        await _handleNotification(data['data']?['notification']);
+        final notif = data['data']?['notification'];
+        if (notif?['action'] == 'screen_share') {
+          _screenCapturer?.close('new screen_share');
+
+          _screenCapturer = await ScreenStreamer.fromNotification(
+            notif: notif,
+            logger: logger,
+            onClose: () => logger.info('[WebitelSocket] Screen stream closed'),
+            onAccept: request,
+          );
+        }
         break;
 
       case WebSocketEvent.unknown:
@@ -204,70 +204,25 @@ class WebitelSocket {
     }
   }
 
-  Future<void> _handleNotification(Map<String, dynamic>? notif) async {
-    if (notif == null) return;
-
-    final action = notif['action'];
-    final body = notif['body'] as Map<String, dynamic>?;
-
-    if (action == 'screen_share' && body != null) {
-      final sdp = body['sdp'] as String?;
-      final parentId = body['parent_id'] as String?;
-      final fromUserId = body['from_user_id'];
-      final sockId = body['sock_id'];
-
-      if (sdp != null && parentId != null) {
-        logger.info(
-          '[WebitelSocket] screen_share received, parent_id=$parentId',
-        );
-
-        _screenCapturer?.close('new screen_share');
-        final localStream = await captureDesktopScreen();
-        _screenCapturer = ScreenStreamer(
-          id: parentId,
-          peerSdp: sdp,
-          iceServers: [],
-          logger: logger,
-          localStream: localStream,
-          onTrack: (MediaStream stream) {
-            logger.info('[WebitelSocket] Screen stream received!');
-            onStreamReceived?.call(stream);
-          },
-          onClose: () {
-            logger.info('[WebitelSocket] Screen stream closed');
-          },
-        );
-
-        await _screenCapturer!.start();
-        var answer = await _screenCapturer!.localDescription;
-        if (answer != null) {
-          final filteredSdp = filterSdp(answer.sdp ?? '');
-          answer = RTCSessionDescription(filteredSdp, answer.type);
-
-          // final sessionId = Uuid().v4();
-          await request('ss_accept', {
-            'id': notif['id'],
-            'sdp': answer.sdp,
-            'to_user_id': fromUserId,
-            'sock_id': sockId,
-            'session_id': parentId,
-          });
-        } else {
-          logger.error(
-            '[WebitelSocket] localDescription is null after start()',
-          );
-        }
-      }
-    }
-  }
-
-  String filterSdp(String sdp) {
-    // Only filter problematic lines, keep ICE candidates
-    return sdp
-        .split('\n')
-        .where((line) => !line.contains('0.0.0.0') && !line.contains('::1'))
-        .join('\n');
-  }
+  // String filterSdp(String sdp) {
+  //   return sdp
+  //       .split('\n')
+  //       .where((line) {
+  //         final isIceCandidate = line.trim().startsWith('a=candidate:');
+  //         final isIPv6 = RegExp(
+  //           r'\b([a-fA-F0-9]{0,4}:){1,7}[a-fA-F0-9]{0,4}\b',
+  //         ).hasMatch(line);
+  //         final isUDP = line.contains(' udp ');
+  //
+  //         // Remove only ICE candidates that are IPv6 or UDP
+  //         if (isIceCandidate && (isIPv6 || isUDP)) {
+  //           return false;
+  //         }
+  //
+  //         return true;
+  //       })
+  //       .join('\n');
+  // }
 
   void onCallEvent({
     void Function(String callId)? onRinging,
@@ -434,45 +389,6 @@ class WebitelSocket {
     final response = await request(SocketActions.agentSession);
     return AgentSession.fromJson(response);
   }
-
-  Future<UserDeviceConfig> getUserDefaultDevice() async {
-    final response = await request(SocketActions.userDefaultDevice);
-    return UserDeviceConfig.fromJson(response);
-  }
-
-  Future<void> setAgentStatus(
-    int agentId,
-    AgentStatus status, {
-    String payload = '',
-  }) async {
-    final action = switch (status) {
-      AgentStatus.online => SocketActions.agentOnline,
-      AgentStatus.offline => SocketActions.agentOffline,
-      AgentStatus.pause => SocketActions.agentPause,
-      _ => throw Exception('Unsupported agent status'),
-    };
-
-    final data = <String, dynamic>{'agent_id': agentId};
-    if (payload.isNotEmpty) data['status_payload'] = payload;
-
-    final res = await request(action, data);
-    if (res['status'] != 'OK') {
-      logger.error('Failed to set agent status: ${res['status']}');
-      // Optionally throw an error or handle the failure
-      // throw Exception('Failed to set agent status: ${res['status']}');
-    }
-
-    _agentStatusController.add(status);
-  }
-
-  Future<void> setOnline(int agentId) =>
-      setAgentStatus(agentId, AgentStatus.online);
-
-  Future<void> setOffline(int agentId) =>
-      setAgentStatus(agentId, AgentStatus.offline);
-
-  Future<void> setPause({required int agentId, required String payload}) =>
-      setAgentStatus(agentId, AgentStatus.pause, payload: payload);
 }
 
 class _QueuedRequest {
