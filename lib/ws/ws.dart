@@ -6,10 +6,10 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:webitel_agent_flutter/logger.dart';
 import 'package:webitel_agent_flutter/webrtc/session/screen_streamer.dart';
-import 'package:webitel_agent_flutter/ws/config.dart';
 import 'package:webitel_agent_flutter/ws/constants.dart';
 import 'package:webitel_agent_flutter/ws/model/agent.dart';
 import 'package:webitel_agent_flutter/ws/model/auth.dart';
+import 'package:webitel_agent_flutter/ws/ws_config.dart';
 
 import 'model/ws_error.dart';
 import 'ws_events.dart';
@@ -32,8 +32,6 @@ class WebitelSocket {
 
   final _pendingRequests = <int, Completer<Map<String, dynamic>>>{};
   final _outgoingQueue = Queue<_QueuedRequest>();
-
-  final logger = LoggerService();
 
   int _seq = 1;
   bool _isConnected = false;
@@ -203,26 +201,6 @@ class WebitelSocket {
         break;
     }
   }
-
-  // String filterSdp(String sdp) {
-  //   return sdp
-  //       .split('\n')
-  //       .where((line) {
-  //         final isIceCandidate = line.trim().startsWith('a=candidate:');
-  //         final isIPv6 = RegExp(
-  //           r'\b([a-fA-F0-9]{0,4}:){1,7}[a-fA-F0-9]{0,4}\b',
-  //         ).hasMatch(line);
-  //         final isUDP = line.contains(' udp ');
-  //
-  //         // Remove only ICE candidates that are IPv6 or UDP
-  //         if (isIceCandidate && (isIPv6 || isUDP)) {
-  //           return false;
-  //         }
-  //
-  //         return true;
-  //       })
-  //       .join('\n');
-  // }
 
   void onCallEvent({
     void Function(String callId)? onRinging,

@@ -8,7 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:screen_capturer/screen_capturer.dart';
 import 'package:webitel_agent_flutter/storage.dart';
 
-import 'config.dart';
+import 'config/config.dart';
 import 'logger.dart';
 
 class ScreenshotSenderService {
@@ -17,7 +17,6 @@ class ScreenshotSenderService {
   Duration _interval = const Duration(minutes: 5);
   bool _isRunning = false;
 
-  final _logger = LoggerService();
   final _secureStorage = SecureStorageService();
 
   ScreenshotSenderService({required this.uploadUrl});
@@ -38,12 +37,12 @@ class ScreenshotSenderService {
     try {
       final token = await _secureStorage.readAccessToken();
       if (token == null) {
-        _logger.warn('No access token available for interval fetch.');
+        logger.warn('No access token available for interval fetch.');
         return;
       }
 
       final uri = Uri.parse(
-        '${AppConfig.loginUrl}api/settings?name=screenshot_interval',
+        '${AppConfig.instance.loginUrl}api/settings?name=screenshot_interval',
       );
       final res = await http.get(uri, headers: {'X-Webitel-Access': token});
 
@@ -55,18 +54,18 @@ class ScreenshotSenderService {
           final minutes = int.tryParse(value.toString());
           if (minutes != null && minutes > 0) {
             _interval = Duration(minutes: minutes);
-            _logger.info('Fetched screenshot interval: $minutes minutes');
+            logger.info('Fetched screenshot interval: $minutes minutes');
           } else {
-            _logger.warn('Invalid interval format: $value');
+            logger.warn('Invalid interval format: $value');
           }
         } else {
-          _logger.warn('No items in interval response: ${res.body}');
+          logger.warn('No items in interval response: ${res.body}');
         }
       } else {
-        _logger.warn('Interval fetch failed: ${res.statusCode} — ${res.body}');
+        logger.warn('Interval fetch failed: ${res.statusCode} — ${res.body}');
       }
     } catch (e, stack) {
-      _logger.error('Failed to fetch interval: $e\n$stack');
+      logger.error('Failed to fetch interval: $e\n$stack');
     }
 
     // Always start timer, even if API failed
@@ -80,7 +79,7 @@ class ScreenshotSenderService {
         final allowed = await ScreenCapturer.instance.isAccessAllowed();
         if (!allowed) {
           await ScreenCapturer.instance.requestAccess(onlyOpenPrefPane: true);
-          _logger.warn('macOS screen capture permission not granted.');
+          logger.warn('macOS screen capture permission not granted.');
           return;
         }
       }
@@ -97,19 +96,19 @@ class ScreenshotSenderService {
       );
 
       if (capture == null) {
-        _logger.warn('Screenshot capture returned null.');
+        logger.warn('Screenshot capture returned null.');
         return;
       }
 
       final file = File(fullPath);
       if (!await file.exists()) {
-        _logger.warn('Screenshot file not found at $fullPath');
+        logger.warn('Screenshot file not found at $fullPath');
         return;
       }
 
       final bytes = await file.readAsBytes();
       if (bytes.isEmpty) {
-        _logger.warn('Screenshot file is empty.');
+        logger.warn('Screenshot file is empty.');
         return;
       }
 
@@ -121,12 +120,12 @@ class ScreenshotSenderService {
       );
 
       if (res.statusCode >= 200 && res.statusCode < 300) {
-        _logger.info('Screenshot uploaded: $filename');
+        logger.info('Screenshot uploaded: $filename');
       } else {
-        _logger.error('Upload failed: ${res.statusCode} — ${res.body}');
+        logger.error('Upload failed: ${res.statusCode} — ${res.body}');
       }
     } catch (e, stack) {
-      _logger.error('Screenshot send failed: $e\n$stack');
+      logger.error('Screenshot send failed: $e\n$stack');
     }
   }
 }

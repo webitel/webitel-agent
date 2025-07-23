@@ -4,8 +4,6 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 import 'package:webitel_agent_flutter/logger.dart';
 
-final logger = LoggerService();
-
 Future<RTCSessionDescription> sendSDPToServer({
   required String url,
   required String token,

@@ -1,16 +1,15 @@
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_agent_flutter/logger.dart';
-import 'package:webitel_agent_flutter/webrtc/core/capturer.dart';
-import 'package:webitel_agent_flutter/webrtc/core/peer_connection.dart';
-import 'package:webitel_agent_flutter/webrtc/core/signaling.dart';
+import 'package:webitel_agent_flutter/webrtc/core/capturer.dart' hide logger;
+import 'package:webitel_agent_flutter/webrtc/core/peer_connection.dart'
+    hide logger;
+import 'package:webitel_agent_flutter/webrtc/core/signaling.dart' hide logger;
 
 class StreamRecorder {
   final String id;
   final String token;
   final String sdpResolverUrl;
   final List<Map<String, dynamic>> iceServers;
-
-  final logger = LoggerService();
 
   RTCPeerConnection? pc;
   MediaStream? stream;

@@ -1,13 +1,13 @@
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:webitel_agent_flutter/config/config.dart';
 import 'package:webitel_agent_flutter/logger.dart';
 
-final logger = LoggerService();
-
 Future<MediaStream?> captureDesktopScreen() async {
-  final int width = int.tryParse(dotenv.env['VIDEO_WIDTH'] ?? '') ?? 1920;
-  final int height = int.tryParse(dotenv.env['VIDEO_HEIGHT'] ?? '') ?? 1080;
-  final int frameRate = int.tryParse(dotenv.env['VIDEO_FRAMERATE'] ?? '') ?? 30;
+  final config = AppConfig.instance;
+
+  final int width = config?.videoWidth ?? 1920;
+  final int height = config?.videoHeight ?? 1080;
+  final int frameRate = config?.videoFramerate ?? 30;
 
   final Map<String, dynamic> constraints = {
     'video': {
@@ -18,12 +18,12 @@ Future<MediaStream?> captureDesktopScreen() async {
         'maxHeight': height + 10,
         'minHeight': height - 10,
         'maxFramerate': frameRate,
-        'frameRate': 30.0,
+        'frameRate': frameRate.toDouble(),
       },
     },
     'audio': false,
   };
-  
+
   try {
     logger.info(
       '[Capturer] Starting screen capture: width=$width, height=$height, frameRate=$frameRate',

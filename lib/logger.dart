@@ -1,8 +1,11 @@
 import 'dart:io';
 
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
+
+import 'config/model/config.dart';
+
+final logger = LoggerService();
 
 class LoggerService {
   static final LoggerService _instance = LoggerService._internal();
@@ -13,16 +16,20 @@ class LoggerService {
 
   factory LoggerService() => _instance;
 
-  LoggerService._internal() {
-    final info = dotenv.env['LOG_LEVEL_INFO']?.toLowerCase() == 'true';
-    final debug = dotenv.env['LOG_LEVEL_DEBUG']?.toLowerCase() == 'true';
-    final error = dotenv.env['LOG_LEVEL_ERROR']?.toLowerCase() == 'true';
+  LoggerService._internal();
 
-    if (debug) {
+  Future<void> init(AppConfigModel? config) async {
+    final bool logLevelDebug = config?.logLevelDebug ?? false;
+    final bool logLevelInfo = config?.logLevelInfo ?? false;
+    final bool logLevelError = config?.logLevelError ?? true;
+    final bool logToFile = config?.logToFile ?? false;
+    final String logFilePath = config?.logFilePath ?? '';
+
+    if (logLevelDebug) {
       _level = Level.debug;
-    } else if (info) {
+    } else if (logLevelInfo) {
       _level = Level.info;
-    } else if (error) {
+    } else if (logLevelError) {
       _level = Level.error;
     } else {
       _level = Level.nothing;
@@ -40,22 +47,17 @@ class LoggerService {
       ),
     );
 
-    _initFileLogging();
-  }
+    if (logToFile) {
+      final dir = await getApplicationDocumentsDirectory();
+      final filePath =
+          logFilePath.isNotEmpty
+              ? '${dir.path}/$logFilePath'
+              : '${dir.path}/app.log';
 
-  Future<void> _initFileLogging() async {
-    final logToFile = dotenv.env['LOG_TO_FILE']?.toLowerCase() == 'true';
-    if (!logToFile) return;
-
-    final customPath = dotenv.env['LOG_FILE_PATH'];
-    final dir = await getApplicationDocumentsDirectory();
-    final filePath = customPath != null && customPath.isNotEmpty
-        ? '${dir.path}/$customPath'
-        : '${dir.path}/app.log';
-
-    final logFile = File(filePath);
-    await logFile.create(recursive: true);
-    _fileSink = logFile.openWrite(mode: FileMode.append);
+      final logFile = File(filePath);
+      await logFile.create(recursive: true);
+      _fileSink = logFile.openWrite(mode: FileMode.append);
+    }
   }
 
   void _logToFile(String level, String message) {

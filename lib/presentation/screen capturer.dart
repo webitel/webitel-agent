@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:webitel_agent_flutter/logger.dart';
-
-final logger = LoggerService();
 
 class ScreenCaptureWidget extends StatefulWidget {
   const ScreenCaptureWidget({super.key});

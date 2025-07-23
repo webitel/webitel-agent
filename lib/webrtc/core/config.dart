@@ -1,4 +1,4 @@
-import '../../config.dart';
+import 'package:webitel_agent_flutter/config/config.dart';
 
 class WebRTCConfig {
   final String sdpUrl;
@@ -15,10 +15,10 @@ class WebRTCConfig {
 
   factory WebRTCConfig.fromEnv() {
     return WebRTCConfig(
-      sdpUrl: AppConfig.webrtcSdpUrl,
-      width: AppConfig.videoWidth,
-      height: AppConfig.videoHeight,
-      frameRate: AppConfig.videoFramerate,
+      sdpUrl: AppConfig.instance.webrtcSdpUrl,
+      width: AppConfig.instance.videoWidth,
+      height: AppConfig.instance.videoHeight,
+      frameRate: AppConfig.instance.videoFramerate,
     );
   }
 

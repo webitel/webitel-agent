@@ -1,17 +1,19 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:tray_manager/tray_manager.dart';
-import 'package:webitel_agent_flutter/config.dart';
 import 'package:webitel_agent_flutter/gen/assets.gen.dart';
 import 'package:webitel_agent_flutter/storage.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 
+import 'config/config.dart';
 import 'logger.dart';
 
 class TrayService with TrayListener {
   static final TrayService instance = TrayService._();
 
-  final _logger = LoggerService();
   final _secureStorage = SecureStorageService();
 
   TrayService._();
@@ -34,7 +36,7 @@ class TrayService with TrayListener {
     _socket = socket;
     _agentStatusSubscription?.cancel();
     _agentStatusSubscription = _socket!.agentStatusStream.listen((status) {
-      _logger.info('TrayService: Received agent status update: $status');
+      logger.info('TrayService: Received agent status update: $status');
       _setStatus(status.name);
     });
   }
@@ -50,7 +52,7 @@ class TrayService with TrayListener {
 
   void setBaseUrl(String url) {
     _baseUrl = url;
-    _logger.debug('TrayService: Base URL set to $_baseUrl');
+    logger.debug('TrayService: Base URL set to $_baseUrl');
     _buildMenu();
   }
 
@@ -58,18 +60,25 @@ class TrayService with TrayListener {
     final token = await _secureStorage.readAccessToken();
 
     if (token != null) {
-      _logger.debug('TrayService: Found existing token on launch.');
-      final Uri loginUri = Uri.parse(AppConfig.loginUrl);
+      logger.debug('TrayService: Found existing token on launch.');
+      final loginUrl =
+          (() {
+            try {
+              final url = AppConfig.instance.loginUrl;
+              if (url.isNotEmpty) return url;
+            } catch (_) {}
+            return 'https:dev.webitel.com';
+          })();
+
+      final Uri loginUri = Uri.parse(loginUrl);
+
       final String determinedBaseUrl =
           '${loginUri.scheme}://${loginUri.host}${loginUri.hasPort ? ':${loginUri.port}' : ''}';
 
-      _logger.debug('TrayService: Derived Base URL: $determinedBaseUrl');
+      logger.debug('TrayService: Derived Base URL: $determinedBaseUrl');
       _baseUrl = determinedBaseUrl;
-
-      _setStatus('online');
     } else {
-      _logger.warn('TrayService: No token found. Starting in offline mode.');
-      _setStatus('offline');
+      logger.warn('TrayService: No token found. Starting in offline mode.');
     }
   }
 
@@ -86,6 +95,13 @@ class TrayService with TrayListener {
   }
 
   @override
+  void onTrayMenuItemClick(MenuItem menuItem) {
+    if (menuItem.key == 'upload_config') {
+      _handleUploadConfig();
+    }
+  }
+
+  @override
   void onTrayIconRightMouseUp() => _startTooltipTimer();
 
   @override
@@ -96,8 +112,36 @@ class TrayService with TrayListener {
     trayManager.popUpContextMenu();
   }
 
+  Future<void> Function()? onConfigUploaded;
+
+  Future<void> _handleUploadConfig() async {
+    try {
+      final file = await openFile(
+        acceptedTypeGroups: [
+          XTypeGroup(label: 'JSON', extensions: ['json']),
+        ],
+      );
+      if (file != null) {
+        final content = await File(file.path).readAsString();
+        final json = jsonDecode(content);
+        await AppConfig.save(json);
+        await AppConfig.load();
+
+        logger.info('TrayService: Config uploaded successfully.');
+        await trayManager.setToolTip('✅ Config updated');
+
+        if (onConfigUploaded != null) {
+          await onConfigUploaded!();
+        }
+      }
+    } catch (e, s) {
+      logger.error('TrayService: Failed to upload config: $e\n$s');
+      await trayManager.setToolTip('❌ Config upload failed');
+    }
+  }
+
   void _setStatus(String status) async {
-    _logger.info('Setting status to $status');
+    logger.info('Setting status to $status');
 
     _status = status;
     _statusChangedAt = DateTime.now();

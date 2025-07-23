@@ -5,7 +5,7 @@
 // import 'package:connectivity_plus/connectivity_plus.dart';
 // import 'package:web_socket_channel/web_socket_channel.dart';
 // import 'package:webitel_agent_flutter/logger.dart';
-// import 'package:webitel_agent_flutter/ws/config.dart';
+// import 'package:webitel_agent_flutter/ws/ws_config.dart';
 // import 'package:webitel_agent_flutter/ws/constants.dart';
 // import 'package:webitel_agent_flutter/ws/model/agent.dart';
 // import 'package:webitel_agent_flutter/ws/model/auth.dart';
@@ -32,7 +32,6 @@
 //   final _pendingRequests = <int, Completer<Map<String, dynamic>>>{};
 //   final _outgoingQueue = Queue<_QueuedRequest>();
 //
-//   final logger = LoggerService();
 //
 //   int _seq = 1;
 //   bool _isConnected = false;
@@ -333,7 +332,7 @@
 // import 'package:connectivity_plus/connectivity_plus.dart';
 // import 'package:web_socket_channel/web_socket_channel.dart';
 // import 'package:webitel_agent_flutter/logger.dart';
-// import 'package:webitel_agent_flutter/ws/config.dart';
+// import 'package:webitel_agent_flutter/ws/ws_config.dart';
 // import 'package:webitel_agent_flutter/ws/constants.dart';
 // import 'package:webitel_agent_flutter/ws/model/agent.dart';
 // import 'package:webitel_agent_flutter/ws/model/auth.dart';
@@ -360,7 +359,6 @@
 //   final _pendingRequests = <int, Completer<Map<String, dynamic>>>{};
 //   final _outgoingQueue = Queue<_QueuedRequest>();
 //
-//   final logger = LoggerService();
 //
 //   int _seq = 1;
 //   bool _isConnected = false;
