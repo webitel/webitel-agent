@@ -38,12 +38,8 @@ Future<void> _startAppFlow() async {
 
   AppConfigModel? config;
 
-  try {
-    config = await AppConfig.load();
-  } catch (e) {}
-
+  config = await AppConfig.load();
   await logger.init(config);
-
   await TrayService.instance.initTray();
 
   if (config != null) {
@@ -268,8 +264,8 @@ Future<void> initialize(String token) async {
 
       try {
         await webrtcStream?.start();
-      } catch (e, stack) {
-        logger.error('Failed to start WebRTC stream: $e', stack);
+      } catch (e) {
+        logger.error('Failed to start WebRTC stream: $e');
       }
     },
     onHangup: (callId) {
