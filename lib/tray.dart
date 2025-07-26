@@ -152,15 +152,22 @@ class TrayService with TrayListener {
   }
 
   String _iconPathForStatus(String status) {
+    final isWindows = Platform.isWindows;
+
     switch (status) {
       case 'online':
-        return Assets.icons.wtCaptureOnline;
+        return isWindows
+            ? Assets.icons.wtCaptureOnlineWindows
+            : Assets.icons.wtCaptureOnline;
       case 'pause':
-        return Assets.icons.wtCapturePause;
       case 'break':
-        return Assets.icons.wtCapturePause;
+        return isWindows
+            ? Assets.icons.wtCapturePauseWindows
+            : Assets.icons.wtCapturePause;
       default:
-        return Assets.icons.wtCaptureOffline;
+        return isWindows
+            ? Assets.icons.wtCaptureOfflineWindows
+            : Assets.icons.wtCaptureOffline;
     }
   }
 
