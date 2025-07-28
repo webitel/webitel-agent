@@ -29,6 +29,9 @@ Future<MediaStream?> captureDesktopScreen() async {
       '[Capturer] Starting screen capture: width=$width, height=$height, frameRate=$frameRate',
     );
 
+    final sources = desktopCapturer.getSources(
+      types: [SourceType.Screen, SourceType.Window],
+    );
     final stream = await mediaDevices.getDisplayMedia(constraints);
 
     logger.info('[Capturer] Screen capture started successfully');

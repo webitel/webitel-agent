@@ -27,14 +27,13 @@ void main() async {
 }
 
 Future<void> _startAppFlow() async {
-  //
-  // final screenCaptureAllowed = await checkAndRequestScreenCapturePermission();
-  // if (!screenCaptureAllowed) {
-  //   logger.warn(
-  //     'Screen capture permission denied or not granted. Exiting app.',
-  //   );
-  //   return;
-  // }
+  final screenCaptureAllowed = await checkAndRequestScreenCapturePermission();
+  if (!screenCaptureAllowed) {
+    logger.warn(
+      'Screen capture permission denied or not granted. Exiting app.',
+    );
+    return;
+  }
 
   AppConfigModel? config;
 
@@ -167,23 +166,25 @@ Future<void> appStartupFlow() async {
 
   String? token = await storage.readAccessToken();
 
-  if (token == null || token.isEmpty) {
-    await waitForNavigator();
+  if (token != null) {
+    if (token.isEmpty) {
+      await waitForNavigator();
 
-    final loggedIn = await performLoginFlow();
-    if (!loggedIn) {
-      logger.warn('Login cancelled. User stays logged out.');
-      return;
-    }
+      final loggedIn = await performLoginFlow();
+      if (!loggedIn) {
+        logger.warn('Login cancelled. User stays logged out.');
+        return;
+      }
 
-    token = await storage.readAccessToken();
-    if (token == null || token.isEmpty) {
-      logger.error('Token missing after login flow!');
-      return;
+      token = await storage.readAccessToken();
+      if (token!.isEmpty) {
+        logger.error('Token missing after login flow!');
+        return;
+      }
     }
   }
 
-  await initialize(token);
+  await initialize(token ?? '');
 }
 
 /// Initializes WebSocket, tray, services, and WebRTC stream handlers

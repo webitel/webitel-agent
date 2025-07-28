@@ -21,6 +21,27 @@ class _LoginWebViewState extends State<LoginWebView> {
     super.initState();
   }
 
+  Future<void> _handleTokenFromUri(Uri uri) async {
+    logger.debug('Checking URI for accessToken: $uri');
+    logger.debug('Full URI query parameters: ${uri.queryParameters}');
+
+    final token = uri.queryParameters['accessToken'];
+
+    if (token != null && token.isNotEmpty) {
+      logger.debug('Found token: $token');
+      await _storage.writeAccessToken(token);
+      logger.info('Logged in. Token stored.');
+
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } else {
+      logger.debug('No valid accessToken found in URI.');
+      if (token == null) logger.debug('Reason: token is null.');
+      if (token?.isEmpty ?? false) logger.debug('Reason: token is empty.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -32,65 +53,21 @@ class _LoginWebViewState extends State<LoginWebView> {
         },
         onLoadStop: (controller, url) async {
           logger.debug('Page finished loading: $url');
+
+          if (url != null) {
+            final uri = Uri.parse(url.toString());
+            await _handleTokenFromUri(uri);
+          }
         },
         onNavigationResponse: (controller, navigationResponse) async {
           final url = navigationResponse.response?.url;
           if (url != null) {
             final uri = Uri.parse(url.toString());
-            logger.debug('Navigation Response URL: $uri');
-            logger.debug('Full URI query parameters: ${uri.queryParameters}');
-
-            String? tokenFromUrl;
-
-            final bool hasAccessTokenKey = uri.queryParameters.containsKey(
-              'accessToken',
-            );
-            logger.debug(
-              'Does queryParameters contain "accessToken" key? $hasAccessTokenKey',
-            );
-
-            if (hasAccessTokenKey) {
-              tokenFromUrl = uri.queryParameters['accessToken'];
-              logger.debug(
-                'Value of accessToken from queryParameters: $tokenFromUrl',
-              );
-            }
-
-            final bool isTokenNull = tokenFromUrl == null;
-            final bool isTokenEmpty = tokenFromUrl?.isEmpty ?? true;
-            logger.debug('Is tokenFromUrl null? $isTokenNull');
-            logger.debug('Is tokenFromUrl empty? $isTokenEmpty');
-
-            if (tokenFromUrl != null && tokenFromUrl.isNotEmpty) {
-              logger.debug(
-                'Conditions met: Processing token and attempting to pop WebView.',
-              );
-
-              await _storage.writeAccessToken(tokenFromUrl);
-              logger.info('Logged in. Token stored.');
-
-              if (mounted) {
-                if (tokenFromUrl != null && tokenFromUrl.isNotEmpty) {
-                  await _storage.writeAccessToken(tokenFromUrl);
-                  logger.info('Logged in. Token stored.');
-
-                  if (mounted) {
-                    Navigator.of(context).pop(true);
-                  }
-                  return NavigationResponseAction.CANCEL;
-                }
-              }
-              return NavigationResponseAction.CANCEL; // Stop navigation
-            } else {
-              logger.debug('Token NOT processed.');
-              if (tokenFromUrl == null) {
-                logger.debug('Reason: tokenFromUrl is null.');
-              } else if (tokenFromUrl.isEmpty) {
-                logger.debug('Reason: tokenFromUrl is empty.');
-              }
-            }
+            await _handleTokenFromUri(uri);
+            return NavigationResponseAction.CANCEL;
           }
-          return NavigationResponseAction.ALLOW; // Allow normal navigation
+
+          return NavigationResponseAction.ALLOW;
         },
         onReceivedError: (controller, request, error) {
           logger.error(
