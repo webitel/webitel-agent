@@ -1,59 +1,47 @@
 // lib/services/secure_storage_service.dart
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-/// A singleton service for FlutterSecureStorage to ensure
-/// a single instance across the application.
 class SecureStorageService {
-  // Private constructor to prevent direct instantiation
   SecureStorageService._internal();
 
-  // The single instance of the class
   static final SecureStorageService _instance =
       SecureStorageService._internal();
 
-  /// Factory constructor to return the same instance every time
-  factory SecureStorageService() {
-    return _instance;
-  }
+  factory SecureStorageService() => _instance;
 
-  /// The FlutterSecureStorage instance itself
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
-
-  /// Expose the FlutterSecureStorage instance if needed
-  FlutterSecureStorage get storage => _storage;
-
-  // --- Convenience methods for common operations ---
-  // You can add more specific methods for different keys if your app grows
-
-  /// Writes the access token to secure storage.
+  /// Writes the access token to storage.
   Future<void> writeAccessToken(String token) async {
-    await _storage.write(key: 'token', value: token);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('token', token);
   }
 
-  /// Reads the access token from secure storage.
+  /// Reads the access token from storage.
   Future<String?> readAccessToken() async {
-    return await _storage.read(key: 'token');
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('token');
   }
 
-  /// Deletes the access token from secure storage.
+  /// Deletes the access token from storage.
   Future<void> deleteAccessToken() async {
-    await _storage.delete(key: 'token');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('token');
   }
 
-  /// Writes the agent ID (as a String) to secure storage.
+  /// Writes the agent ID (as a String) to storage.
   Future<void> writeAgentId(int agentId) async {
-    await _storage.write(key: 'agent_id', value: agentId.toString());
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('agent_id', agentId);
   }
 
-  /// Reads the agent ID from secure storage. Returns null if not found.
+  /// Reads the agent ID from storage.
   Future<int?> readAgentId() async {
-    final idStr = await _storage.read(key: 'agent_id');
-    if (idStr == null) return null;
-    return int.tryParse(idStr);
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt('agent_id');
   }
 
-  /// Deletes the agent ID from secure storage.
+  /// Deletes the agent ID from storage.
   Future<void> deleteAgentId() async {
-    await _storage.delete(key: 'agent_id');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('agent_id');
   }
 }
