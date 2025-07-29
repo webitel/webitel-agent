@@ -156,18 +156,12 @@ class TrayService with TrayListener {
 
     switch (status) {
       case 'online':
-        return isWindows
-            ? Assets.icons.wtCaptureOnlineWindows
-            : Assets.icons.wtCaptureOnline;
+        return isWindows ? Assets.icons.online : Assets.icons.wtCaptureOnline;
       case 'pause':
       case 'break':
-        return isWindows
-            ? Assets.icons.wtCapturePauseWindows
-            : Assets.icons.wtCapturePause;
+        return isWindows ? Assets.icons.pause : Assets.icons.wtCapturePause;
       default:
-        return isWindows
-            ? Assets.icons.wtCaptureOfflineWindows
-            : Assets.icons.wtCaptureOffline;
+        return isWindows ? Assets.icons.offline : Assets.icons.wtCaptureOffline;
     }
   }
 
