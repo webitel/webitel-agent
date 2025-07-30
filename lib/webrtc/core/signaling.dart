@@ -4,7 +4,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 import 'package:webitel_agent_flutter/logger.dart';
 
-Future<RTCSessionDescription> sendSDPToServer({
+Future<({RTCSessionDescription answer, String streamId})> sendSDPToServer({
   required String url,
   required String token,
   required RTCSessionDescription offer,
@@ -32,10 +32,41 @@ Future<RTCSessionDescription> sendSDPToServer({
     }
 
     final json = jsonDecode(response.body);
-    logger.info('[Signaling] Received SDP answer');
-    return RTCSessionDescription(json['sdp_answer'], 'answer');
+    logger.info('[Signaling] Received SDP answer and stream ID');
+
+    return (
+      answer: RTCSessionDescription(json['sdp_answer'], 'answer'),
+      streamId: json['id'] as String,
+    );
   } catch (e, stack) {
     logger.error('[Signaling] Exception during SDP exchange: $e', stack);
+    rethrow;
+  }
+}
+
+Future<void> stopStreamOnServer({
+  required String url,
+  required String id,
+  required String token,
+}) async {
+  try {
+    logger.debug('[Signaling] Sending DELETE to $url...');
+    final response = await http.delete(
+      Uri.parse(url),
+      headers: {'X-Webitel-Access': token},
+    );
+
+    logger.debug('[Signaling] DELETE response: ${response.statusCode}');
+    if (response.statusCode != 200) {
+      logger.warn(
+        '[Signaling] Failed to stop stream on server: ${response.body}',
+      );
+      throw Exception('Failed to stop stream on server');
+    }
+
+    logger.info('[Signaling] Stream successfully stopped on server');
+  } catch (e, stack) {
+    logger.error('[Signaling] Exception during stream stop: $e', stack);
     rethrow;
   }
 }

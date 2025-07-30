@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:webitel_agent_flutter/logger.dart';
+import 'package:webitel_agent_flutter/tray.dart';
 import 'package:webitel_agent_flutter/webrtc/session/screen_streamer.dart';
 import 'package:webitel_agent_flutter/ws/constants.dart';
 import 'package:webitel_agent_flutter/ws/model/agent.dart';
@@ -110,6 +111,28 @@ class WebitelSocket {
 
         if (status == 'OK') {
           final responseData = typedData['data'];
+          if (responseData is Map && responseData.containsKey('status')) {
+            final rawStatus = responseData['status'] as String?;
+
+            if (rawStatus != null) {
+              final AgentStatus agentStatus = switch (rawStatus) {
+                'online' => AgentStatus.online,
+                'offline' => AgentStatus.offline,
+                'pause' => AgentStatus.pause,
+                _ => AgentStatus.unknown,
+              };
+
+              _agentStatusController.add(agentStatus);
+              TrayService.instance.updateStatus(rawStatus);
+
+              if (agentStatus == AgentStatus.unknown) {
+                logger.warn(
+                  'Unknown agent status received (reply): $rawStatus',
+                );
+              }
+            }
+          }
+
           if (responseData is Map && responseData.isNotEmpty) {
             completer.complete(Map<String, dynamic>.from(responseData));
           } else {

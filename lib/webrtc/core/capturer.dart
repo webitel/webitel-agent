@@ -5,9 +5,9 @@ import 'package:webitel_agent_flutter/logger.dart';
 Future<MediaStream?> captureDesktopScreen() async {
   final config = AppConfig.instance;
 
-  final int width = config?.videoWidth ?? 1920;
-  final int height = config?.videoHeight ?? 1080;
-  final int frameRate = config?.videoFramerate ?? 30;
+  final int width = config.videoWidth;
+  final int height = config.videoHeight;
+  final int frameRate = config.videoFramerate;
 
   final Map<String, dynamic> constraints = {
     'video': {

@@ -27,13 +27,13 @@ void main() async {
 }
 
 Future<void> _startAppFlow() async {
-  final screenCaptureAllowed = await checkAndRequestScreenCapturePermission();
-  if (!screenCaptureAllowed) {
-    logger.warn(
-      'Screen capture permission denied or not granted. Exiting app.',
-    );
-    return;
-  }
+  // final screenCaptureAllowed = await checkAndRequestScreenCapturePermission();
+  // if (!screenCaptureAllowed) {
+  //   logger.warn(
+  //     'Screen capture permission denied or not granted. Exiting app.',
+  //   );
+  //   return;
+  // }
 
   AppConfigModel? config;
 
@@ -123,33 +123,44 @@ Future<void> waitForNavigator() async {
 }
 
 /// Handles the login process via WebView
-Future<bool> performLoginFlow() async {
-  final storage = SecureStorageService();
+bool _isLoggingIn = false;
 
-  final navigator = navigatorKey.currentState;
-  if (navigator == null) {
-    logger.error('NavigatorState is null, cannot open LoginWebView');
+Future<bool> performLoginFlow() async {
+  if (_isLoggingIn) {
+    logger.warn('Login already in progress, skipping duplicate call.');
     return false;
   }
 
-  final result = await navigator.push<bool>(
-    MaterialPageRoute(
-      builder: (_) => LoginWebView(url: AppConfig.instance.loginUrl),
-    ),
-  );
+  _isLoggingIn = true;
 
-  if (result == true) {
-    final token = await storage.readAccessToken();
-    if (token != null && token.isNotEmpty) {
-      final uri = Uri.parse(AppConfig.instance.loginUrl);
-      final baseUrl =
-          '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}';
-      TrayService.instance.setBaseUrl(baseUrl);
-      return true;
+  try {
+    final navigator = navigatorKey.currentState;
+    if (navigator == null) {
+      logger.error('NavigatorState is null, cannot open LoginWebView');
+      return false;
     }
-  }
 
-  return false;
+    final result = await navigator.push<bool>(
+      MaterialPageRoute(
+        builder: (_) => LoginWebView(url: AppConfig.instance.loginUrl),
+      ),
+    );
+
+    if (result == true) {
+      final token = await SecureStorageService().readAccessToken();
+      if (token != null && token.isNotEmpty) {
+        final uri = Uri.parse(AppConfig.instance.loginUrl);
+        final baseUrl =
+            '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}';
+        TrayService.instance.setBaseUrl(baseUrl);
+        return true;
+      }
+    }
+
+    return false;
+  } finally {
+    _isLoggingIn = false;
+  }
 }
 
 /// Main startup logic: login, init socket, start services
@@ -245,7 +256,6 @@ Future<void> initialize(String token) async {
   final agent = await socket.getAgentSession();
   await storage.writeAgentId(agent.agentId);
 
-  TrayService.instance.updateStatus('online');
   TrayService.instance.attachSocket(socket);
 
   StreamRecorder? webrtcStream;
@@ -257,7 +267,7 @@ Future<void> initialize(String token) async {
       final webrtcConfig = WebRTCConfig.fromEnv();
 
       webrtcStream = StreamRecorder(
-        id: callId,
+        callID: callId,
         token: token,
         sdpResolverUrl: webrtcConfig.sdpUrl,
         iceServers: AppConfig.instance.webrtcIceServers,
