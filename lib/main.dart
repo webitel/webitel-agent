@@ -205,6 +205,7 @@ Future<void> initialize(String token) async {
   final socket = WebitelSocket(
     config: WebitelSocketConfig(
       url: AppConfig.instance.webitelWsUrl,
+      mediaUploadUrl: AppConfig.instance.mediaUploadUrl,
       token: token,
     ),
   );
@@ -280,6 +281,31 @@ Future<void> initialize(String token) async {
       }
     },
     onHangup: (callId) {
+      webrtcStream?.stop();
+      webrtcStream = null;
+    },
+  );
+
+  socket.onScreenRecordEvent(
+    onStart: (body) async {
+      webrtcStream?.stop(); // in case something's already running
+
+      final webrtcConfig = WebRTCConfig.fromEnv();
+
+      webrtcStream = StreamRecorder(
+        callID: body['root_id'] ?? 'unknown_recording',
+        token: token,
+        sdpResolverUrl: webrtcConfig.sdpUrl,
+        iceServers: AppConfig.instance.webrtcIceServers,
+      );
+
+      try {
+        await webrtcStream?.start();
+      } catch (e) {
+        logger.error('Failed to start screen recording stream: $e');
+      }
+    },
+    onStop: (body) {
       webrtcStream?.stop();
       webrtcStream = null;
     },

@@ -69,11 +69,11 @@ class ScreenshotSenderService {
     }
 
     // Always start timer, even if API failed
-    _timer = Timer.periodic(_interval, (_) => _takeAndSend());
-    _takeAndSend(); // First run immediately
+    _timer = Timer.periodic(_interval, (_) => screenshot());
+    screenshot(); // First run immediately
   }
 
-  Future<void> _takeAndSend() async {
+  Future<void> screenshot() async {
     try {
       if (defaultTargetPlatform == TargetPlatform.macOS) {
         final allowed = await ScreenCapturer.instance.isAccessAllowed();
