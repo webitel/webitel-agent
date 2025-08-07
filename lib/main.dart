@@ -27,13 +27,13 @@ void main() async {
 }
 
 Future<void> _startAppFlow() async {
-  // final screenCaptureAllowed = await checkAndRequestScreenCapturePermission();
-  // if (!screenCaptureAllowed) {
-  //   logger.warn(
-  //     'Screen capture permission denied or not granted. Exiting app.',
-  //   );
-  //   return;
-  // }
+  final screenCaptureAllowed = await checkAndRequestScreenCapturePermission();
+  if (!screenCaptureAllowed) {
+    logger.warn(
+      'Screen capture permission denied or not granted. Exiting app.',
+    );
+    return;
+  }
 
   AppConfigModel? config;
 

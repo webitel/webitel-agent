@@ -88,14 +88,21 @@ class ScreenStreamer {
     try {
       // Create peer connection
       // In peer connection configuration:
-      _pc = await createPeerConnection({'iceServers': iceServers});
+      _pc = await createPeerConnection({
+       'iceServers': iceServers,
+       'iceConnectionReceivingTimeout': 5000, 
+       'iceTransportPolicy':'all',
+       'tcpCandidatePolicy':'enabled',
+       });
+      
 
-      await _pc!.setConfiguration({
-        'iceServers': iceServers,
-        'sdpSemantics': 'unified-plan',
-      });
+      // await _pc!.setConfiguration({
+      //   'iceServers': iceServers,
+      //   'sdpSemantics': 'unified-plan',
+      // });
 
       logger.debug('[ScreenStreamer] Peer connection created');
+
 
       // Handle ICE connection state changes
       _pc!.onIceConnectionState = (RTCIceConnectionState state) {
@@ -103,15 +110,16 @@ class ScreenStreamer {
 
         switch (state) {
           case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
-            _restartIce();
+            // _restartIce();
           case RTCIceConnectionState.RTCIceConnectionStateFailed:
             logger.error(
               '[ScreenStreamer] ICE state $state - closing connection',
             );
-            // close('ICE $state');
-            _restartIce();
+            close('ICE $state');
+            // _restartIce();
             break;
           case RTCIceConnectionState.RTCIceConnectionStateClosed:
+            close('ICE $state');
             logger.warn('[ScreenStreamer] ICE connection closed manually');
             break;
           case RTCIceConnectionState.RTCIceConnectionStateConnected:
@@ -141,29 +149,34 @@ class ScreenStreamer {
 
       // Create answer
       // In offer/answer options:
-      final answer = await _pc!.createAnswer({'iceRestart': true});
+      final answer = await _pc!.createAnswer({});
       logger.debug('[ScreenStreamer] SDP answer created');
 
       // Set local SDP
       await _pc!.setLocalDescription(answer);
-      logger.info('[ScreenStreamer] Local SDP answer set');
+      logger.info('[ScreenStreamer] >>>>>>>>>>>>>>>>>>>> Local SDP answer set');
 
-      // Optional: Timeout to check ICE not stuck
-      Future.delayed(Duration(seconds: 30), () async {
-        if (_pc != null &&
-            _pc!.iceConnectionState !=
-                RTCIceConnectionState.RTCIceConnectionStateConnected &&
-            _pc!.iceConnectionState !=
-                RTCIceConnectionState.RTCIceConnectionStateCompleted) {
-          logger.error('[ScreenStreamer] ICE timeout - force closing');
-          close('ICE timeout');
-        }
-      });
+      await waitForIceGatheringComplete(_pc!);
+
     } catch (e, stack) {
       logger.error('[ScreenStreamer] Failed to start: $e');
       logger.debug(stack.toString());
       close('Exception during start: $e');
     }
+
+    
+    
+  }
+
+  Future<void> waitForIceGatheringComplete(RTCPeerConnection pc, {Duration timeout = const Duration(seconds: 5)}) async {
+        final start = DateTime.now();
+      
+        while (pc.iceGatheringState != RTCIceGatheringState.RTCIceGatheringStateComplete) {
+          await Future.delayed(const Duration(milliseconds: 100));
+          if (DateTime.now().difference(start) > timeout) {
+            throw TimeoutException('ICE gathering did not complete in time');
+          }
+        }
   }
 
   void _restartIce() async {
@@ -181,6 +194,7 @@ class ScreenStreamer {
   void close(String reason) {
     logger.warn('[ScreenStreamer] Closing: $reason');
     _pc?.close();
+    _pc?.dispose();
     _pc = null;
     localStream?.dispose();
     onClose();
