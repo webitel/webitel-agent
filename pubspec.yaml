@@ -36,8 +36,13 @@ dev_dependencies:
   flutter_gen_runner: ^5.10.0
   flutter_lints: ^6.0.0
   build_runner: ^2.5.4
+  msix: ^3.16.12
 
-
+msix_config:
+  display_name: WebitelDescTrack
+  publisher_display_name: Webitel
+  msix_version: 1.0.0.0
+  logo_path: D:\webitel-agent\windows\runner\resources\app_icon.ico
 
 flutter_gen:
   output: lib/gen/
