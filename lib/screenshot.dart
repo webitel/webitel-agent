@@ -12,14 +12,14 @@ import 'config/config.dart';
 import 'logger.dart';
 
 class ScreenshotSenderService {
-  final String uploadUrl;
+  final String baseUrl;
   Timer? _timer;
-  Duration _interval = const Duration(minutes: 5);
+  Duration _interval = const Duration(seconds: 10);
   bool _isRunning = false;
 
   final _secureStorage = SecureStorageService();
 
-  ScreenshotSenderService({required this.uploadUrl});
+  ScreenshotSenderService({required this.baseUrl});
 
   void start() {
     if (_isRunning) return;
@@ -51,10 +51,10 @@ class ScreenshotSenderService {
         final items = bodyJson['items'];
         if (items is List && items.isNotEmpty) {
           final value = items.first['value'];
-          final minutes = int.tryParse(value.toString());
-          if (minutes != null && minutes > 0) {
-            _interval = Duration(minutes: minutes);
-            logger.info('Fetched screenshot interval: $minutes minutes');
+          final seconds = int.tryParse(value.toString());
+          if (seconds != null && seconds > 0) {
+            _interval = Duration(seconds: seconds);
+            logger.info('Fetched screenshot interval: $seconds seconds');
           } else {
             logger.warn('Invalid interval format: $value');
           }
@@ -112,13 +112,28 @@ class ScreenshotSenderService {
         return;
       }
 
-      final uri = Uri.parse('$uploadUrl&name=$filename');
+      final agentId = await _secureStorage.readAgentId() ?? 'unknown_user';
+      final agentToken = await _secureStorage.readAccessToken() ?? 'unknown';
+
+      const channel = 'screenshot';
+
+      final uri = Uri.parse(
+        '$baseUrl/api/storage/file/$agentId/upload',
+      ).replace(
+        queryParameters: {'channel': channel, 'access_token': agentToken},
+      );
+
       final res = await http.post(
         uri,
         headers: {'Content-Type': 'image/png'},
         body: bytes,
       );
 
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        logger.info('Screenshot uploaded: $filename');
+      } else {
+        logger.error('Upload failed: ${res.statusCode} — ${res.body}');
+      }
       if (res.statusCode >= 200 && res.statusCode < 300) {
         logger.info('Screenshot uploaded: $filename');
       } else {
