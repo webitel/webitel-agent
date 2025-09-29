@@ -193,14 +193,25 @@ class WebitelSocket {
   void _handleCallEvent(Map<String, dynamic> data) {
     final call = data['data']?['call'];
     final callEvent = call?['event'];
-    final callId = call?['id'];
+    final recordScreen = call?['record_screen'] as bool? ?? false;
 
     switch (callEvent) {
       case 'ringing':
-        _onCallRinging?.call(callId);
+        if (recordScreen) {
+          logger.info(
+            '[ScreenRecorder] Starting screen recording for call ${call?['id']}',
+          );
+          screenshotService.start();
+        }
         break;
+
       case 'hangup':
-        _onCallHangup?.call(callId);
+        if (recordScreen) {
+          logger.info(
+            '[ScreenRecorder] Stopping screen recording for call ${call?['id']}',
+          );
+          screenshotService.stop();
+        }
         break;
     }
   }
