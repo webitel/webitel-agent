@@ -26,7 +26,10 @@ dependencies:
   uuid: ^4.5.1
   file_selector: ^1.0.3
   shared_preferences: ^2.5.3
-  win32: ^5.14.0
+  ffmpeg_kit_flutter_new: ^3.2.0
+  mime: ^2.0.0
+  http_parser: ^4.1.2
+  win32: ^5.15.0
 
 
 
@@ -36,13 +39,8 @@ dev_dependencies:
   flutter_gen_runner: ^5.10.0
   flutter_lints: ^6.0.0
   build_runner: ^2.5.4
-  msix: ^3.16.12
 
-msix_config:
-  display_name: WebitelDescTrack
-  publisher_display_name: Webitel
-  msix_version: 1.0.0.0
-  logo_path: D:\webitel-agent\windows\runner\resources\app_icon.ico
+
 
 flutter_gen:
   output: lib/gen/

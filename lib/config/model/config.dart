@@ -1,11 +1,14 @@
 // lib/config/model/app_config_model.dart
 
-
 class AppConfigModel {
   final String loginUrl;
   final bool screenshotEnabled;
   final String mediaUploadUrl;
   final String webitelWsUrl;
+
+  // If true, video files are saved locally and uploaded later
+  // If false, video files are uploaded immediately after recording
+  final bool videoSaveLocally;
 
   // Logger
   final bool logLevelInfo;
@@ -38,11 +41,13 @@ class AppConfigModel {
     required this.videoWidth,
     required this.videoHeight,
     required this.videoFramerate,
+    required this.videoSaveLocally,
   });
 
   factory AppConfigModel.fromJson(Map<String, dynamic> json) {
     return AppConfigModel(
       loginUrl: json['LOGIN_URL'] ?? '',
+
       screenshotEnabled:
           (json['SCREENSHOT_ENABLED'] ?? 'false').toString().toLowerCase() ==
           'true',
@@ -72,6 +77,9 @@ class AppConfigModel {
       videoHeight: int.tryParse(json['VIDEO_HEIGHT']?.toString() ?? '') ?? 720,
       videoFramerate:
           int.tryParse(json['VIDEO_FRAMERATE']?.toString() ?? '') ?? 30,
+      videoSaveLocally:
+          (json['VIDEO_SAVE_LOCALLY'] ?? 'false').toString().toLowerCase() ==
+          'true',
     );
   }
 
@@ -92,6 +100,7 @@ class AppConfigModel {
       videoWidth: 640,
       videoHeight: 480,
       videoFramerate: 30,
+      videoSaveLocally: false,
     );
   }
 }

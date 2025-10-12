@@ -8,10 +8,11 @@ import 'package:webitel_agent_flutter/login.dart';
 import 'package:webitel_agent_flutter/presentation/page/main.dart';
 import 'package:webitel_agent_flutter/presentation/page/missing_config.dart';
 import 'package:webitel_agent_flutter/screenshot.dart';
+import 'package:webitel_agent_flutter/service/video/video_recorder.dart';
+import 'package:webitel_agent_flutter/service/webrtc/core/config.dart';
+import 'package:webitel_agent_flutter/service/webrtc/session/stream_recorder.dart';
 import 'package:webitel_agent_flutter/storage.dart';
 import 'package:webitel_agent_flutter/tray.dart';
-import 'package:webitel_agent_flutter/webrtc/core/config.dart';
-import 'package:webitel_agent_flutter/webrtc/session/stream_recorder.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 import 'package:webitel_agent_flutter/ws/ws_config.dart';
 
@@ -20,20 +21,23 @@ import 'config/model/config.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
+LocalVideoRecorder? localRecorder;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await _startAppFlow();
 }
 
+// FIXME AGENT STATUS DOES NOT SYNC WITH SOCKET EVENT
 Future<void> _startAppFlow() async {
-  final screenCaptureAllowed = await checkAndRequestScreenCapturePermission();
-  if (!screenCaptureAllowed) {
-    logger.warn(
-      'Screen capture permission denied or not granted. Exiting app.',
-    );
-    return;
-  }
+  // final screenCaptureAllowed = await checkAndRequestScreenCapturePermission();
+  // if (!screenCaptureAllowed) {
+  //   logger.warn(
+  //     'Screen capture permission denied or not granted. Exiting app.',
+  //   );
+  //   return;
+  // }
 
   AppConfigModel? config;
 
@@ -264,15 +268,32 @@ Future<void> initialize(String token) async {
   socket.onCallEvent(
     onRinging: (callId) async {
       webrtcStream?.stop();
+      localRecorder?.stopRecording();
 
       final webrtcConfig = WebRTCConfig.fromEnv();
+      final appConfig = AppConfig.instance;
 
-      webrtcStream = StreamRecorder(
-        callID: callId,
-        token: token,
-        sdpResolverUrl: webrtcConfig.sdpUrl,
-        iceServers: AppConfig.instance.webrtcIceServers,
-      );
+      if (appConfig.videoSaveLocally) {
+        localRecorder = LocalVideoRecorder(
+          callId: callId,
+          agentToken: token,
+          baseUrl: appConfig.loginUrl,
+          channel: 'screensharing',
+        );
+
+        try {
+          await localRecorder?.startRecording(recordingId: callId);
+        } catch (e) {
+          logger.error('Failed to start local recording: $e');
+        }
+      } else {
+        webrtcStream = StreamRecorder(
+          callID: callId,
+          token: token,
+          sdpResolverUrl: webrtcConfig.sdpUrl,
+          iceServers: appConfig.webrtcIceServers,
+        );
+      }
 
       try {
         await webrtcStream?.start();
@@ -280,24 +301,60 @@ Future<void> initialize(String token) async {
         logger.error('Failed to start WebRTC stream: $e');
       }
     },
-    onHangup: (callId) {
+    onHangup: (callId) async {
       webrtcStream?.stop();
       webrtcStream = null;
+
+      if (localRecorder != null) {
+        try {
+          await localRecorder!.stopRecording();
+
+          await Future.delayed(Duration(seconds: 4));
+
+          final success = await localRecorder!.uploadVideoWithRetry();
+          if (!success) {
+            logger.error('Video upload failed after all retries');
+          }
+        } catch (e) {
+          logger.error('Error during local recording stop or upload: $e');
+        } finally {
+          await LocalVideoRecorder.cleanupOldVideos(daysToKeep: 1);
+          localRecorder = null;
+        }
+      }
     },
   );
 
   socket.onScreenRecordEvent(
     onStart: (body) async {
-      webrtcStream?.stop(); // in case something's already running
+      webrtcStream?.stop();
+      localRecorder?.stopRecording();
 
       final webrtcConfig = WebRTCConfig.fromEnv();
+      final appConfig = AppConfig.instance;
+      final recordingId = body['root_id'] ?? 'unknown_recording';
 
-      webrtcStream = StreamRecorder(
-        callID: body['root_id'] ?? 'unknown_recording',
-        token: token,
-        sdpResolverUrl: webrtcConfig.sdpUrl,
-        iceServers: AppConfig.instance.webrtcIceServers,
-      );
+      if (appConfig.videoSaveLocally) {
+        localRecorder = LocalVideoRecorder(
+          callId: recordingId,
+          agentToken: token,
+          baseUrl: appConfig.loginUrl,
+          channel: 'screensharing',
+        );
+
+        try {
+          await localRecorder?.startRecording(recordingId: recordingId);
+        } catch (e) {
+          logger.error('Failed to start local screen recording: $e');
+        }
+      } else {
+        webrtcStream = StreamRecorder(
+          callID: recordingId,
+          token: token,
+          sdpResolverUrl: webrtcConfig.sdpUrl,
+          iceServers: appConfig.webrtcIceServers,
+        );
+      }
 
       try {
         await webrtcStream?.start();
@@ -305,15 +362,25 @@ Future<void> initialize(String token) async {
         logger.error('Failed to start screen recording stream: $e');
       }
     },
-    onStop: (body) {
+    onStop: (body) async {
       webrtcStream?.stop();
       webrtcStream = null;
+
+      if (localRecorder != null) {
+        await localRecorder?.stopRecording();
+        final success = await localRecorder?.uploadVideoWithRetry();
+        if (success != null && !success) {
+          logger.error('Video upload failed after all retries');
+        }
+        await LocalVideoRecorder.cleanupOldVideos(daysToKeep: 1);
+        localRecorder = null;
+      }
     },
   );
 
   if (AppConfig.instance.screenshotEnabled) {
     final screenshotService = ScreenshotSenderService(
-      uploadUrl: AppConfig.instance.mediaUploadUrl,
+      baseUrl: AppConfig.instance.mediaUploadUrl,
     );
     screenshotService.start();
   }

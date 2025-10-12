@@ -6,12 +6,12 @@ import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:webitel_agent_flutter/service/webrtc/session/screen_streamer.dart';
 import 'package:webitel_agent_flutter/ws/ws_config.dart';
 
 import '../logger.dart';
 import '../screenshot.dart';
 import '../tray.dart';
-import '../webrtc/session/screen_streamer.dart';
 import '../ws/constants.dart';
 import '../ws/model/agent.dart';
 import '../ws/model/auth.dart';
@@ -194,24 +194,25 @@ class WebitelSocket {
     final call = data['data']?['call'];
     final callEvent = call?['event'];
     final recordScreen = call?['record_screen'] as bool? ?? false;
+    final callId = call?['id']?.toString() ?? 'unknown';
 
     switch (callEvent) {
       case 'ringing':
-        if (recordScreen) {
-          logger.info(
-            '[ScreenRecorder] Starting screen recording for call ${call?['id']}',
-          );
-          screenshotService.start();
-        }
+        // if (recordScreen) {
+        _onCallRinging?.call(callId);
+        logger.info(
+          '[ScreenRecorder] Starting screen recording for call ${call?['id']}',
+        );
+        // }
         break;
 
       case 'hangup':
-        if (recordScreen) {
-          logger.info(
-            '[ScreenRecorder] Stopping screen recording for call ${call?['id']}',
-          );
-          screenshotService.stop();
-        }
+        // if (recordScreen) {
+        _onCallHangup?.call(callId);
+        logger.info(
+          '[ScreenRecorder] Stopping screen recording for call ${call?['id']}',
+        );
+        // }
         break;
     }
   }

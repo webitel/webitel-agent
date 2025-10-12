@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_agent_flutter/logger.dart';
-import 'package:webitel_agent_flutter/webrtc/core/capturer.dart';
+import 'package:webitel_agent_flutter/service/webrtc/core/capturer.dart';
 
 typedef OnReceiverClosed = void Function();
 typedef OnAccept =
@@ -89,12 +89,11 @@ class ScreenStreamer {
       // Create peer connection
       // In peer connection configuration:
       _pc = await createPeerConnection({
-       'iceServers': iceServers,
-       'iceConnectionReceivingTimeout': 5000, 
-       'iceTransportPolicy':'all',
-       'tcpCandidatePolicy':'enabled',
-       });
-      
+        'iceServers': iceServers,
+        'iceConnectionReceivingTimeout': 15000,
+        'iceTransportPolicy': 'all',
+        'tcpCandidatePolicy': 'enabled',
+      });
 
       // await _pc!.setConfiguration({
       //   'iceServers': iceServers,
@@ -103,20 +102,50 @@ class ScreenStreamer {
 
       logger.debug('[ScreenStreamer] Peer connection created');
 
+      _pc!.onSignalingState = (RTCSignalingState state) {
+        logger.debug('[ScreenStreamer] Signaling state: $state');
+        if (state == RTCSignalingState.RTCSignalingStateClosed) {
+          logger.warn(
+            '[ScreenStreamer] Signaling state $state - closing connection',
+          );
+          close('Signaling $state');
+        }
+      };
+
+      _pc?.onIceGatheringState = (RTCIceGatheringState state) {
+        logger.debug('[ScreenStreamer] ICE gathering state: $state');
+        if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {
+          logger.info('[ScreenStreamer] ICE gathering complete');
+        } else if (state ==
+            RTCIceGatheringState.RTCIceGatheringStateGathering) {
+          logger.info('[ScreenStreamer] ICE gathering in progress...');
+        }
+      };
+
+      _pc!.onConnectionState = (RTCPeerConnectionState state) async {
+        logger.debug('[ScreenStreamer] Peer connection state: $state');
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+            state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+          logger.warn(
+            '[ScreenStreamer] Peer connection failed/closed, stopping stream...',
+          );
+          await _pc?.restartIce();
+        }
+      };
 
       // Handle ICE connection state changes
-      _pc!.onIceConnectionState = (RTCIceConnectionState state) {
+      _pc!.onIceConnectionState = (RTCIceConnectionState state) async {
         logger.debug('[ScreenStreamer] ICE connection state: $state');
 
         switch (state) {
           case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
-            // _restartIce();
+            await _pc?.restartIce();
+            break;
           case RTCIceConnectionState.RTCIceConnectionStateFailed:
             logger.error(
               '[ScreenStreamer] ICE state $state - closing connection',
             );
             close('ICE $state');
-            // _restartIce();
             break;
           case RTCIceConnectionState.RTCIceConnectionStateClosed:
             close('ICE $state');
@@ -157,39 +186,50 @@ class ScreenStreamer {
       logger.info('[ScreenStreamer] >>>>>>>>>>>>>>>>>>>> Local SDP answer set');
 
       await waitForIceGatheringComplete(_pc!);
-
     } catch (e, stack) {
       logger.error('[ScreenStreamer] Failed to start: $e');
       logger.debug(stack.toString());
       close('Exception during start: $e');
     }
-
-    
-    
   }
 
-  Future<void> waitForIceGatheringComplete(RTCPeerConnection pc, {Duration timeout = const Duration(seconds: 5)}) async {
-        final start = DateTime.now();
-      
-        while (pc.iceGatheringState != RTCIceGatheringState.RTCIceGatheringStateComplete) {
-          await Future.delayed(const Duration(milliseconds: 100));
-          if (DateTime.now().difference(start) > timeout) {
-            throw TimeoutException('ICE gathering did not complete in time');
-          }
-        }
-  }
+  Future<void> restartIceFlow() async {
+    logger.info('[ScreenStreamer] Performing full ICE restart');
 
-  void _restartIce() async {
     try {
-      await _pc!.restartIce();
-      logger.info('ICE restart triggered');
-    } catch (e) {
-      logger.error('ICE restart failed: $e');
+      final offer = await _pc!.createOffer({'iceRestart': true});
+      await _pc!.setLocalDescription(offer);
+
+      logger.debug('[ScreenStreamer] Restart ICE offer created and set');
+
+      await onAccept('ss_restart', {'id': id, 'sdp': offer.sdp});
+
+      logger.info('[ScreenStreamer] ICE restart offer sent');
+    } catch (e, stack) {
+      logger.error('[ScreenStreamer] ICE restart failed: $e');
+      logger.debug(stack.toString());
+      close('ICE restart failed');
     }
   }
 
-  Future<RTCSessionDescription?>? get localDescription =>
-      _pc?.getLocalDescription();
+  Future<void> waitForIceGatheringComplete(
+    RTCPeerConnection pc, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final start = DateTime.now();
+
+    while (pc.iceGatheringState !=
+        RTCIceGatheringState.RTCIceGatheringStateComplete) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (DateTime.now().difference(start) > timeout) {
+        throw TimeoutException('ICE gathering did not complete in time');
+      }
+    }
+  }
+
+  Future<RTCSessionDescription?>? get localDescription async {
+    return await _pc?.getLocalDescription();
+  }
 
   void close(String reason) {
     logger.warn('[ScreenStreamer] Closing: $reason');
