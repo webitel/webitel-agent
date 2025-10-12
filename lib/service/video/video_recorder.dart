@@ -257,19 +257,26 @@ class LocalVideoRecorder {
     logger.info('Stopping FFmpeg recording...');
 
     try {
-      // Send SIGINT (Ctrl+C)
-      _windowsProcess!.kill(ProcessSignal.sigint);
+      // On Windows, FFmpeg expects 'q' via stdin to stop recording gracefully
+      _windowsProcess!.stdin.writeln('q');
+      await _windowsProcess!.stdin.flush();
+      await _windowsProcess!.stdin.close();
 
-      await _windowsProcess!.exitCode.timeout(
-        const Duration(seconds: 2),
+      // Wait for the process to exit with a timeout
+      final exitCode = await _windowsProcess!.exitCode.timeout(
+        const Duration(seconds: 5),
         onTimeout: () {
-          logger.warn('Force killing FFmpeg process...');
-          _windowsProcess!.kill(ProcessSignal.sigkill);
+          logger.warn('FFmpeg did not exit in time, killing process...');
+          _windowsProcess!.kill(); // Force kill
           return -1;
         },
       );
 
-      logger.info('FFmpeg recording stopped');
+      logger.info(
+        exitCode != -1
+            ? 'FFmpeg recording stopped with exit code $exitCode'
+            : 'FFmpeg was force killed',
+      );
     } catch (e) {
       logger.error('Error stopping FFmpeg: $e');
     } finally {
