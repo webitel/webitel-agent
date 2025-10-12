@@ -219,7 +219,10 @@ class LocalVideoRecorder {
   }
 
   Future<void> stopRecording() async {
-    if (!_isRecording || _currentSession == null) return;
+    if (!_isRecording) return;
+    //FIXME removed as Windows use Process, not FFmpegSession
+    // MacOS can still use FFmpegSession
+    // || _currentSession == null
 
     debugPrint('Stopping recording gracefully...');
 
