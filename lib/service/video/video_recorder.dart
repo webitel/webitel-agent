@@ -28,6 +28,8 @@ class LocalVideoRecorder {
   static const int maxRetries = 3;
   static const Duration retryDelay = Duration(seconds: 2);
 
+  Process? _windowsProcess;
+
   String? _recordingFilePath;
 
   LocalVideoRecorder({
@@ -158,43 +160,8 @@ class LocalVideoRecorder {
             '-c:v h264_videotoolbox -pix_fmt yuv420p -b:v 5M -y $filePath';
       }
     } else if (Platform.isWindows) {
-      // Step 1: Dynamically get the number of connected monitors on Windows
-      // We use the Win32 API via Dart FFI: GetSystemMetrics(SM_CMONITORS)
-      // This ensures we capture all monitors without hardcoding any values.
-      final monitorCount = getWindowsMonitorCount();
-      logger.info('Detected $monitorCount monitor(s) on Windows');
-
-      if (monitorCount == 0) {
-        throw Exception('No monitors detected for recording.');
-      }
-
-      // Step 2: Construct input arguments for FFmpeg's gfxcapture filter
-      // - gfxcapture=monitor_idx=N captures the N-th monitor
-      // - width=1280 & height=720 scales the captured frames to reduce CPU/GPU load
-      // - resize_mode=scale_aspect preserves the aspect ratio of each monitor
-      // - output_fmt=10bit provides higher color fidelity for hardware encoders
-      final inputArgs = List.generate(
-        monitorCount,
-        (i) =>
-            'gfxcapture=monitor_idx=${i + 1}:width=1280:height=720:resize_mode=scale_aspect:output_fmt=10bit',
-      ).join(',');
-
-      // Step 3: Create the filter chain
-      // - If multiple monitors, horizontally stack all streams using hstack=inputs=N
-      // - Add fps=15 to reduce CPU/GPU load and avoid unnecessarily high frame rates
-      final filterComplex =
-          monitorCount > 1
-              ? '$inputArgs,hstack=inputs=$monitorCount,fps=15'
-              : '$inputArgs,fps=15';
-
-      // Step 4: Build FFmpeg command
-      // - Using hevc_nvenc hardware encoder (NVIDIA) or hevc_qsv (Intel) if available
-      // - This offloads encoding from CPU to GPU, improving performance
-      // - -pix_fmt yuv420p ensures compatibility with most players
-      // - -y overwrites output file if it exists
-      ffmpegCommand =
-          '-f dshow -i video="$filterComplex" '
-          '-c:v hevc_nvenc -pix_fmt yuv420p -b:v 5M -y $filePath';
+      _startRecordingWindows(filePath);
+      return;
     } else {
       throw UnsupportedError('Recording not supported on this platform');
     }
@@ -230,12 +197,38 @@ class LocalVideoRecorder {
     logger.info('Started screen recording to $_recordingFilePath');
   }
 
+  Future<void> _startRecordingWindows(String filePath) async {
+    _windowsProcess = await Process.start('ffmpeg', [
+      '-f', 'gdigrab', // Windows screen grabber
+      '-framerate', '15',
+      '-i', 'desktop',
+      '-vf', 'scale=1280:720',
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-pix_fmt', 'yuv420p',
+      '-b:v', '5M',
+      '-y', filePath,
+    ], runInShell: true);
+
+    _isRecording = true;
+    logger.info('🎥 FFmpeg recording started (Windows): $filePath');
+
+    _windowsProcess!.stderr
+        .transform(SystemEncoding().decoder)
+        .listen((data) => logger.info('FFmpeg: $data'));
+  }
+
   Future<void> stopRecording() async {
     if (!_isRecording || _currentSession == null) return;
 
     debugPrint('Stopping recording gracefully...');
 
     try {
+      if (Platform.isWindows) {
+        await _stopRecordingWindows();
+        return;
+      }
+
       await _currentSession?.cancel();
       _currentSession = null;
 
@@ -253,6 +246,36 @@ class LocalVideoRecorder {
     }
 
     _isRecording = false;
+  }
+
+  Future<void> _stopRecordingWindows() async {
+    if (_windowsProcess == null) {
+      logger.warn('No FFmpeg process to stop');
+      return;
+    }
+
+    logger.info('Stopping FFmpeg recording...');
+
+    try {
+      // Send SIGINT (Ctrl+C)
+      _windowsProcess!.kill(ProcessSignal.sigint);
+
+      await _windowsProcess!.exitCode.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () {
+          logger.warn('Force killing FFmpeg process...');
+          _windowsProcess!.kill(ProcessSignal.sigkill);
+          return -1;
+        },
+      );
+
+      logger.info('FFmpeg recording stopped');
+    } catch (e) {
+      logger.error('Error stopping FFmpeg: $e');
+    } finally {
+      _windowsProcess = null;
+      _isRecording = false;
+    }
   }
 
   Future<bool> uploadVideoWithRetry() async {
@@ -319,18 +342,6 @@ class LocalVideoRecorder {
     } catch (e) {
       _logger.error('Error uploading video: $e');
       return false;
-    }
-  }
-
-  Future<void> _deleteLocalFile() async {
-    try {
-      if (_videoFile != null && await _videoFile!.exists()) {
-        await _videoFile!.delete();
-        _logger.info('🧹 Deleted local video file: ${_videoFile!.path}');
-      }
-      _videoFile = null;
-    } catch (e) {
-      _logger.error('Failed to delete local file: $e');
     }
   }
 
