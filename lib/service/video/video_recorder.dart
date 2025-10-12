@@ -1,0 +1,378 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_session.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:mime/mime.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:win32/win32.dart';
+
+import '../../logger.dart' show logger;
+
+class LocalVideoRecorder {
+  final String callId;
+  final String agentToken;
+  final String baseUrl;
+  final String channel;
+
+  File? _videoFile;
+  IOSink? _fileSink;
+  bool _isRecording = false;
+  final _logger = logger;
+  FFmpegSession? _currentSession;
+
+  static const int maxRetries = 3;
+  static const Duration retryDelay = Duration(seconds: 2);
+
+  String? _recordingFilePath;
+
+  LocalVideoRecorder({
+    required this.callId,
+    required this.agentToken,
+    required this.baseUrl,
+    this.channel = 'screensharing',
+  });
+
+  Future<Directory> _getVideoDirectory() async {
+    final dir = await getApplicationDocumentsDirectory();
+    final recordingsDir = Directory('${dir.path}/recordings');
+    if (!await recordingsDir.exists()) {
+      await recordingsDir.create(recursive: true);
+    }
+    return recordingsDir;
+  }
+
+  Future<List<int>> getMacScreenIndices() async {
+    const command = '-f avfoundation -list_devices true -i 0';
+
+    final session = await FFmpegKit.execute(command);
+    final logs = await session.getLogs();
+    final logText = logs.map((log) => log.getMessage()).join('\n');
+
+    final screenIndices = <int>[];
+    final regex = RegExp(r'\[(\d+)\] Capture screen \d+');
+
+    for (final match in regex.allMatches(logText)) {
+      final index = int.tryParse(match.group(1) ?? '');
+      if (index != null) screenIndices.add(index);
+    }
+
+    debugPrint('Detected screens: $screenIndices');
+
+    return screenIndices;
+  }
+
+  int getWindowsMonitorCount() {
+    return GetSystemMetrics(SM_CMONITORS);
+  }
+
+  Future<void> startRecording({required String recordingId}) async {
+    if (_isRecording) return;
+
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    String? ffmpegCommand;
+
+    final directory = await _getVideoDirectory();
+    final filePath = '${directory.path}/${recordingId}_$timestamp.mp4';
+    _recordingFilePath = filePath;
+    _videoFile = File(filePath);
+
+    // macOS screen recording logic using FFmpeg with hardware acceleration
+    //
+    // This block is only executed on macOS platforms because it relies on
+    // the `avfoundation` input device, which is specific to macOS.
+    //
+    // 1. Retrieve available screen indices on the Mac using `getMacScreenIndices()`.
+    //    This returns a list of integers representing each connected display.
+    //    Logging is used to verify which screens are detected.
+    //
+    // 2. If no screens are detected, throw an exception immediately.
+    //    This prevents attempting an FFmpeg command with invalid inputs.
+    //
+    // 3. Construct FFmpeg input arguments for each screen:
+    //    - `-f avfoundation` specifies the input device format (macOS screen capture).
+    //    - `-framerate 15` lowers the frame rate to reduce CPU load while recording.
+    //      (Higher FPS increases CPU usage.)
+    //    - `-pixel_format nv12` selects a format optimized for hardware encoding on Mac.
+    //    - `"$i:none"` captures only video for the given screen index; audio is disabled.
+    //
+    // 4. Single screen case:
+    //    - If only one screen is detected, simply scale the video to 1280x720
+    //      to reduce resolution and CPU load while maintaining reasonable quality.
+    //    - Use `h264_videotoolbox` for hardware-accelerated H.264 encoding,
+    //      which offloads encoding from the CPU to the GPU/Video Toolbox.
+    //    - `-pix_fmt yuv420p` ensures compatibility with most players.
+    //    - `-b:v 5M` sets a reasonable bitrate for 720p, balancing quality and file size.
+    //    - `-y` overwrites the output file if it exists.
+    //
+    // 5. Multiple screens case:
+    //    - Each screen stream is scaled individually to 1280x720 to normalize resolution.
+    //    - Each scaled stream is labeled as `[v0]`, `[v1]`, etc., for filter chaining.
+    //    - All labeled streams are horizontally stacked using `hstack=inputs=N`.
+    //      This creates a single combined video showing all screens side by side.
+    //    - Use the same hardware-accelerated H.264 encoding and pixel format as above.
+    //    - The final command produces a single MP4 file containing all screen captures.
+    //
+    // Overall, this setup prioritizes:
+    //    - CPU efficiency by using hardware encoding and lower frame rates.
+    //    - Compatibility by using H.264 with `yuv420p` pixel format.
+    //    - Multi-screen support by dynamically building filter chains.
+
+    if (Platform.isMacOS) {
+      final screenIndices = await getMacScreenIndices();
+      logger.info('Found Mac screens: $screenIndices');
+
+      if (screenIndices.isEmpty) {
+        throw Exception('No screens detected for recording.');
+      }
+
+      final inputArgs = screenIndices
+          .map(
+            (i) =>
+                '-f avfoundation -framerate 15 -pixel_format nv12 -i "$i:none"',
+          )
+          .join(' ');
+
+      if (screenIndices.length == 1) {
+        ffmpegCommand =
+            '$inputArgs -vf "scale=1280:720" -c:v h264_videotoolbox -pix_fmt yuv420p -b:v 5M -y $filePath';
+      } else {
+        final stackChain = screenIndices
+            .asMap()
+            .entries
+            .map((entry) {
+              final i = entry.key;
+              return '[$i:v]scale=1280:720[v$i]';
+            })
+            .join(';');
+
+        final inputChain =
+            List.generate(screenIndices.length, (i) => '[v$i]').join();
+
+        ffmpegCommand =
+            '$inputArgs -filter_complex "$stackChain;$inputChain hstack=inputs=${screenIndices.length}" '
+            '-c:v h264_videotoolbox -pix_fmt yuv420p -b:v 5M -y $filePath';
+      }
+    } else if (Platform.isWindows) {
+      // Step 1: Dynamically get the number of connected monitors on Windows
+      // We use the Win32 API via Dart FFI: GetSystemMetrics(SM_CMONITORS)
+      // This ensures we capture all monitors without hardcoding any values.
+      final monitorCount = getWindowsMonitorCount();
+      logger.info('Detected $monitorCount monitor(s) on Windows');
+
+      if (monitorCount == 0) {
+        throw Exception('No monitors detected for recording.');
+      }
+
+      // Step 2: Construct input arguments for FFmpeg's gfxcapture filter
+      // - gfxcapture=monitor_idx=N captures the N-th monitor
+      // - width=1280 & height=720 scales the captured frames to reduce CPU/GPU load
+      // - resize_mode=scale_aspect preserves the aspect ratio of each monitor
+      // - output_fmt=10bit provides higher color fidelity for hardware encoders
+      final inputArgs = List.generate(
+        monitorCount,
+        (i) =>
+            'gfxcapture=monitor_idx=${i + 1}:width=1280:height=720:resize_mode=scale_aspect:output_fmt=10bit',
+      ).join(',');
+
+      // Step 3: Create the filter chain
+      // - If multiple monitors, horizontally stack all streams using hstack=inputs=N
+      // - Add fps=15 to reduce CPU/GPU load and avoid unnecessarily high frame rates
+      final filterComplex =
+          monitorCount > 1
+              ? '$inputArgs,hstack=inputs=$monitorCount,fps=15'
+              : '$inputArgs,fps=15';
+
+      // Step 4: Build FFmpeg command
+      // - Using hevc_nvenc hardware encoder (NVIDIA) or hevc_qsv (Intel) if available
+      // - This offloads encoding from CPU to GPU, improving performance
+      // - -pix_fmt yuv420p ensures compatibility with most players
+      // - -y overwrites output file if it exists
+      ffmpegCommand =
+          '-f dshow -i video="$filterComplex" '
+          '-c:v hevc_nvenc -pix_fmt yuv420p -b:v 5M -y $filePath';
+    } else {
+      throw UnsupportedError('Recording not supported on this platform');
+    }
+
+    _isRecording = true;
+
+    logger.info('Executing FFmpeg command:\n$ffmpegCommand');
+
+    _currentSession = await FFmpegKit.executeAsync(ffmpegCommand ?? '', (
+      session,
+    ) async {
+      final returnCode = await session.getReturnCode();
+      final logs = await session.getAllLogsAsString();
+
+      if (ReturnCode.isSuccess(returnCode)) {
+        if (_recordingFilePath != null &&
+            File(_recordingFilePath!).existsSync()) {
+          final fileSize = await File(_recordingFilePath!).length();
+          logger.info(
+            'Recording saved: $_recordingFilePath (${fileSize ~/ 1024} KB)',
+          );
+        } else {
+          logger.error('File not created: $_recordingFilePath');
+        }
+      } else {
+        logger.error('Recording failed with return code $returnCode');
+        logger.warn('FFmpeg logs:\n$logs');
+      }
+
+      _isRecording = false;
+    });
+
+    logger.info('Started screen recording to $_recordingFilePath');
+  }
+
+  Future<void> stopRecording() async {
+    if (!_isRecording || _currentSession == null) return;
+
+    debugPrint('Stopping recording gracefully...');
+
+    try {
+      await _currentSession?.cancel();
+      _currentSession = null;
+
+      await Future.delayed(const Duration(seconds: 1));
+
+      if (_recordingFilePath != null &&
+          File(_recordingFilePath!).existsSync()) {
+        final fileSize = await File(_recordingFilePath!).length();
+        debugPrint('Recording stopped, file size: ${fileSize ~/ 1024} KB');
+      } else {
+        debugPrint('File not found after stop');
+      }
+    } catch (e) {
+      debugPrint('Error stopping recording: $e');
+    }
+
+    _isRecording = false;
+  }
+
+  Future<bool> uploadVideoWithRetry() async {
+    if (_videoFile == null) {
+      _logger.warn('No video file to upload, skipping retries');
+      return false;
+    }
+
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      _logger.info('Upload attempt $attempt of $maxRetries');
+      final success = await uploadVideo();
+      if (success) return true;
+
+      if (attempt < maxRetries) {
+        _logger.warn(
+          'Upload failed, retrying in ${retryDelay.inSeconds} seconds...',
+        );
+        await Future.delayed(retryDelay);
+      }
+    }
+
+    _logger.error('Failed to upload video after $maxRetries attempts');
+    return false;
+  }
+
+  Future<bool> uploadVideo() async {
+    if (_videoFile == null || !await _videoFile!.exists()) {
+      _logger.error('No video file to upload');
+      return false;
+    }
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/storage/file/$callId/upload').replace(
+        queryParameters: {'channel': channel, 'access_token': agentToken},
+      );
+
+      _logger.info('Uploading video to: $uri');
+
+      final request = http.MultipartRequest('POST', uri);
+      final mimeType = lookupMimeType(_videoFile!.path) ?? 'video/mp4';
+      final mimeParts = mimeType.split('/');
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'file',
+          _videoFile!.path,
+          contentType: MediaType(mimeParts[0], mimeParts[1]),
+          filename: _videoFile!.path.split('/').last,
+        ),
+      );
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        _logger.info('Video uploaded successfully');
+        // await _deleteLocalFile();
+        return true;
+      } else {
+        _logger.error(
+          '❌ Upload failed: ${response.statusCode} ${response.body}',
+        );
+        return false;
+      }
+    } catch (e) {
+      _logger.error('Error uploading video: $e');
+      return false;
+    }
+  }
+
+  Future<void> _deleteLocalFile() async {
+    try {
+      if (_videoFile != null && await _videoFile!.exists()) {
+        await _videoFile!.delete();
+        _logger.info('🧹 Deleted local video file: ${_videoFile!.path}');
+      }
+      _videoFile = null;
+    } catch (e) {
+      _logger.error('Failed to delete local file: $e');
+    }
+  }
+
+  Future<double> getFileSizeMB() async {
+    if (_videoFile == null || !await _videoFile!.exists()) return 0;
+    final bytes = await _videoFile!.length();
+    return bytes / (1024 * 1024);
+  }
+
+  Future<bool> isFileValid() async {
+    if (_videoFile == null || !await _videoFile!.exists()) return false;
+    try {
+      final size = await _videoFile!.length();
+      return size > 0;
+    } catch (e) {
+      _logger.error('Error checking file validity: $e');
+      return false;
+    }
+  }
+
+  static Future<void> cleanupOldVideos({int daysToKeep = 7}) async {
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final videoDir = Directory('${appDir.path}/recordings');
+      if (!await videoDir.exists()) return;
+
+      final cutoffDate = DateTime.now().subtract(Duration(days: daysToKeep));
+      await for (final entity in videoDir.list()) {
+        if (entity is File) {
+          final stat = await entity.stat();
+          if (stat.modified.isBefore(cutoffDate)) {
+            await entity.delete();
+            logger.info('🧹 Deleted old video: ${entity.path}');
+          }
+        }
+      }
+    } catch (e) {
+      logger.error('Failed to cleanup old videos: $e');
+    }
+  }
+
+  void dispose() {
+    _fileSink?.close();
+  }
+}
