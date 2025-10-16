@@ -61,13 +61,14 @@ class TrayService with TrayListener {
 
     if (token != null) {
       logger.debug('TrayService: Found existing token on launch.');
+
       final loginUrl =
           (() {
             try {
               final url = AppConfig.instance.loginUrl;
               if (url.isNotEmpty) return url;
             } catch (_) {}
-            return 'https:dev.webitel.com';
+            return AppConfig.instance.baseUrl;
           })();
 
       final Uri loginUri = Uri.parse(loginUrl);

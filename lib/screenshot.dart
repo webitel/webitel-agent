@@ -42,7 +42,7 @@ class ScreenshotSenderService {
       }
 
       final uri = Uri.parse(
-        '${AppConfig.instance.loginUrl}api/settings?name=screenshot_interval',
+        '${AppConfig.instance.baseUrl}api/settings?name=screenshot_interval',
       );
       final res = await http.get(uri, headers: {'X-Webitel-Access': token});
 

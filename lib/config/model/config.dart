@@ -1,19 +1,27 @@
-// lib/config/model/app_config_model.dart
-
 class AppConfigModel {
+  // Base server URL
+  final String baseUrl;
+
+  // Auth
   final String loginUrl;
+
+  // Media
   final bool screenshotEnabled;
   final String mediaUploadUrl;
+
+  // WebSocket / connection
   final String webitelWsUrl;
 
-  // If true, video files are saved locally and uploaded later
-  // If false, video files are uploaded immediately after recording
+  // Video
+  final int videoWidth;
+  final int videoHeight;
+  final int videoFramerate;
   final bool videoSaveLocally;
 
   // Logger
-  final bool logLevelInfo;
-  final bool logLevelDebug;
-  final bool logLevelError;
+  final bool logInfo;
+  final bool logDebug;
+  final bool logError;
   final bool logToFile;
   final String logFilePath;
 
@@ -21,86 +29,72 @@ class AppConfigModel {
   final String webrtcSdpUrl;
   final List<Map<String, dynamic>> webrtcIceServers;
 
-  // Screen Capture
-  final int videoWidth;
-  final int videoHeight;
-  final int videoFramerate;
-
   AppConfigModel({
+    required this.baseUrl,
     required this.loginUrl,
     required this.screenshotEnabled,
     required this.mediaUploadUrl,
     required this.webitelWsUrl,
-    required this.logLevelInfo,
-    required this.logLevelDebug,
-    required this.logLevelError,
-    required this.logToFile,
-    required this.logFilePath,
-    required this.webrtcSdpUrl,
-    required this.webrtcIceServers,
     required this.videoWidth,
     required this.videoHeight,
     required this.videoFramerate,
     required this.videoSaveLocally,
+    required this.logInfo,
+    required this.logDebug,
+    required this.logError,
+    required this.logToFile,
+    required this.logFilePath,
+    required this.webrtcSdpUrl,
+    required this.webrtcIceServers,
   });
 
   factory AppConfigModel.fromJson(Map<String, dynamic> json) {
+    final server = json['server'] ?? {};
+    final baseUrl = server['baseUrl'] ?? '';
+
+    String combineUrl(String? path) {
+      if (path == null || path.isEmpty) return '';
+      if (path.startsWith('http')) return path; // already full URL
+      return '$baseUrl${path.startsWith('/') ? path : '/$path'}';
+    }
+
+    final auth = json['auth'] ?? {};
+    final media = json['media'] ?? {};
+    final connection = json['connection'] ?? {};
+    final logger = json['logger'] ?? {};
+    final webrtc = json['webrtc'] ?? {};
+    final video = json['video'] ?? {};
+
+    bool parseBool(dynamic v, [bool d = false]) =>
+        v is bool ? v : v.toString().toLowerCase() == 'true';
+
+    int parseInt(dynamic v, [int d = 0]) =>
+        int.tryParse(v?.toString() ?? '') ?? d;
+
+    List<Map<String, dynamic>> parseIceServers(dynamic v) {
+      if (v is List) {
+        return v.map((e) => Map<String, dynamic>.from(e)).toList();
+      }
+      return [];
+    }
+
     return AppConfigModel(
-      loginUrl: json['LOGIN_URL'] ?? '',
-
-      screenshotEnabled:
-          (json['SCREENSHOT_ENABLED'] ?? 'false').toString().toLowerCase() ==
-          'true',
-      mediaUploadUrl: json['MEDIA_UPLOAD_URL'] ?? '',
-      webitelWsUrl: json['WEBITEL_WS_URL'] ?? '',
-
-      logLevelInfo:
-          (json['LOG_LEVEL_INFO'] ?? 'false').toString().toLowerCase() ==
-          'true',
-      logLevelDebug:
-          (json['LOG_LEVEL_DEBUG'] ?? 'false').toString().toLowerCase() ==
-          'true',
-      logLevelError:
-          (json['LOG_LEVEL_ERROR'] ?? 'false').toString().toLowerCase() ==
-          'true',
-      logToFile:
-          (json['LOG_TO_FILE'] ?? 'false').toString().toLowerCase() == 'true',
-      logFilePath: json['LOG_FILE_PATH'] ?? '',
-
-      webrtcSdpUrl: json['WEBRTC_SDP_URL'] ?? '',
-      webrtcIceServers:
-          (json['WEBRTC_ICE_SERVERS'] as List<dynamic>? ?? [])
-              .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e))
-              .toList(),
-
-      videoWidth: int.tryParse(json['VIDEO_WIDTH']?.toString() ?? '') ?? 1280,
-      videoHeight: int.tryParse(json['VIDEO_HEIGHT']?.toString() ?? '') ?? 720,
-      videoFramerate:
-          int.tryParse(json['VIDEO_FRAMERATE']?.toString() ?? '') ?? 30,
-      videoSaveLocally:
-          (json['VIDEO_SAVE_LOCALLY'] ?? 'false').toString().toLowerCase() ==
-          'true',
-    );
-  }
-
-  /// Returns default logger levels as a map
-  static AppConfigModel defaultLogger() {
-    return AppConfigModel(
-      loginUrl: '',
-      screenshotEnabled: false,
-      mediaUploadUrl: '',
-      webitelWsUrl: '',
-      logLevelInfo: true,
-      logLevelDebug: true,
-      logLevelError: true,
-      logToFile: true,
-      logFilePath: '/tmp/log.txt',
-      webrtcSdpUrl: '',
-      webrtcIceServers: [],
-      videoWidth: 640,
-      videoHeight: 480,
-      videoFramerate: 30,
-      videoSaveLocally: false,
+      baseUrl: baseUrl,
+      loginUrl: combineUrl(auth['loginPath']),
+      screenshotEnabled: parseBool(media['screenshotEnabled']),
+      mediaUploadUrl: combineUrl(media['uploadPath']),
+      webitelWsUrl: combineUrl(connection['websocketPath']),
+      videoWidth: parseInt(video['width'], 1280),
+      videoHeight: parseInt(video['height'], 720),
+      videoFramerate: parseInt(video['framerate'], 30),
+      videoSaveLocally: parseBool(video['saveLocally']),
+      logInfo: parseBool(logger['info']),
+      logDebug: parseBool(logger['debug']),
+      logError: parseBool(logger['error']),
+      logToFile: parseBool(logger['toFile']),
+      logFilePath: logger['filePath'] ?? '/tmp/log.txt',
+      webrtcSdpUrl: combineUrl(webrtc['sdpPath']),
+      webrtcIceServers: parseIceServers(webrtc['iceServers']),
     );
   }
 }

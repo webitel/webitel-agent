@@ -277,7 +277,7 @@ Future<void> initialize(String token) async {
         localRecorder = LocalVideoRecorder(
           callId: callId,
           agentToken: token,
-          baseUrl: appConfig.loginUrl,
+          baseUrl: appConfig.baseUrl,
           channel: 'screensharing',
         );
 
@@ -338,7 +338,7 @@ Future<void> initialize(String token) async {
         localRecorder = LocalVideoRecorder(
           callId: recordingId,
           agentToken: token,
-          baseUrl: appConfig.loginUrl,
+          baseUrl: appConfig.baseUrl,
           channel: 'screensharing',
         );
 

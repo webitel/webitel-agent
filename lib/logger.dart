@@ -19,9 +19,9 @@ class LoggerService {
   LoggerService._internal();
 
   Future<void> init(AppConfigModel? config) async {
-    final bool logLevelDebug = config?.logLevelDebug ?? false;
-    final bool logLevelInfo = config?.logLevelInfo ?? false;
-    final bool logLevelError = config?.logLevelError ?? true;
+    final bool logLevelDebug = config?.logDebug ?? false;
+    final bool logLevelInfo = config?.logInfo ?? false;
+    final bool logLevelError = config?.logError ?? true;
     final bool logToFile = config?.logToFile ?? false;
     final String logFilePath = config?.logFilePath ?? '';
 
