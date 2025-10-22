@@ -42,7 +42,7 @@ class ScreenshotSenderService {
       }
 
       final uri = Uri.parse(
-        '${AppConfig.instance.baseUrl}api/settings?name=screenshot_interval',
+        '${AppConfig.instance.baseUrl}/api/settings?name=screenshot_interval',
       );
       final res = await http.get(uri, headers: {'X-Webitel-Access': token});
 
@@ -120,7 +120,11 @@ class ScreenshotSenderService {
       final uri = Uri.parse(
         '$baseUrl/api/storage/file/$agentId/upload',
       ).replace(
-        queryParameters: {'channel': channel, 'access_token': agentToken},
+        queryParameters: {
+          'channel': channel,
+          'access_token': agentToken,
+          'thumbnail': 'true',
+        },
       );
 
       final res = await http.post(

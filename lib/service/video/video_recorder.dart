@@ -319,7 +319,11 @@ class LocalVideoRecorder {
 
     try {
       final uri = Uri.parse('$baseUrl/api/storage/file/$callId/upload').replace(
-        queryParameters: {'channel': channel, 'access_token': agentToken},
+        queryParameters: {
+          'channel': channel,
+          'access_token': agentToken,
+          'thumbnail': 'true',
+        },
       );
 
       _logger.info('Uploading video to: $uri');
@@ -372,24 +376,22 @@ class LocalVideoRecorder {
     }
   }
 
-  static Future<void> cleanupOldVideos({int daysToKeep = 7}) async {
+  static Future<void> cleanupOldVideos() async {
     try {
       final appDir = await getApplicationDocumentsDirectory();
       final videoDir = Directory('${appDir.path}/recordings');
       if (!await videoDir.exists()) return;
 
-      final cutoffDate = DateTime.now().subtract(Duration(days: daysToKeep));
       await for (final entity in videoDir.list()) {
         if (entity is File) {
-          final stat = await entity.stat();
-          if (stat.modified.isBefore(cutoffDate)) {
-            await entity.delete();
-            logger.info('🧹 Deleted old video: ${entity.path}');
-          }
+          await entity.delete();
+          logger.info('Deleted video: ${entity.path}');
         }
       }
+
+      logger.info('Cleanup complete');
     } catch (e) {
-      logger.error('Failed to cleanup old videos: $e');
+      logger.error('Failed to cleanup videos: $e');
     }
   }
 

@@ -53,7 +53,7 @@ class WebitelSocket {
 
   WebitelSocket({required this.config}) {
     _token = config.token;
-    screenshotService = ScreenshotSenderService(baseUrl: config.mediaUploadUrl);
+    screenshotService = ScreenshotSenderService(baseUrl: config.baseUrl);
   }
 
   // Public Streams

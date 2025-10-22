@@ -1,31 +1,30 @@
 class AppConfigModel {
-  // Base server URL
+  // --- Base server settings ---
   final String baseUrl;
 
-  // Auth
+  // --- Auth ---
   final String loginUrl;
 
-  // Media
+  // --- Media ---
   final bool screenshotEnabled;
-  final String mediaUploadUrl;
 
-  // WebSocket / connection
+  // --- WebSocket connection ---
   final String webitelWsUrl;
 
-  // Video
+  // --- Video configuration ---
   final int videoWidth;
   final int videoHeight;
   final int videoFramerate;
   final bool videoSaveLocally;
 
-  // Logger
+  // --- Logger configuration ---
   final bool logInfo;
   final bool logDebug;
   final bool logError;
   final bool logToFile;
   final String logFilePath;
 
-  // WebRTC
+  // --- WebRTC ---
   final String webrtcSdpUrl;
   final List<Map<String, dynamic>> webrtcIceServers;
 
@@ -33,7 +32,6 @@ class AppConfigModel {
     required this.baseUrl,
     required this.loginUrl,
     required this.screenshotEnabled,
-    required this.mediaUploadUrl,
     required this.webitelWsUrl,
     required this.videoWidth,
     required this.videoHeight,
@@ -48,19 +46,37 @@ class AppConfigModel {
     required this.webrtcIceServers,
   });
 
+  /// --- Fixed paths (never change) ---
+  static const String _loginPath = '/';
+
+  static const String _websocketPath =
+      '/ws/websocket?application_name=desc_track&ver=1.0.0';
+  static const String _sdpPath = '/api/webrtc/video';
+
+  /// ----------------------------------
+
   factory AppConfigModel.fromJson(Map<String, dynamic> json) {
     final server = json['server'] ?? {};
     final baseUrl = server['baseUrl'] ?? '';
 
+    // Helper to combine HTTPS URLs
     String combineUrl(String? path) {
       if (path == null || path.isEmpty) return '';
-      if (path.startsWith('http')) return path; // already full URL
+      if (path.startsWith('http')) return path;
       return '$baseUrl${path.startsWith('/') ? path : '/$path'}';
     }
 
-    final auth = json['auth'] ?? {};
+    // Helper to combine WebSocket URLs (convert http → ws)
+    String combineWsUrl(String? path) {
+      if (path == null || path.isEmpty) return '';
+      if (path.startsWith('ws')) return path;
+      final wsBase = baseUrl
+          .replaceFirst(RegExp(r'^https'), 'wss')
+          .replaceFirst(RegExp(r'^http'), 'ws');
+      return '$wsBase${path.startsWith('/') ? path : '/$path'}';
+    }
+
     final media = json['media'] ?? {};
-    final connection = json['connection'] ?? {};
     final logger = json['logger'] ?? {};
     final webrtc = json['webrtc'] ?? {};
     final video = json['video'] ?? {};
@@ -80,10 +96,9 @@ class AppConfigModel {
 
     return AppConfigModel(
       baseUrl: baseUrl,
-      loginUrl: combineUrl(auth['loginPath']),
+      loginUrl: combineUrl(_loginPath),
       screenshotEnabled: parseBool(media['screenshotEnabled']),
-      mediaUploadUrl: combineUrl(media['uploadPath']),
-      webitelWsUrl: combineUrl(connection['websocketPath']),
+      webitelWsUrl: combineWsUrl(_websocketPath),
       videoWidth: parseInt(video['width'], 1280),
       videoHeight: parseInt(video['height'], 720),
       videoFramerate: parseInt(video['framerate'], 30),
@@ -93,7 +108,7 @@ class AppConfigModel {
       logError: parseBool(logger['error']),
       logToFile: parseBool(logger['toFile']),
       logFilePath: logger['filePath'] ?? '/tmp/log.txt',
-      webrtcSdpUrl: combineUrl(webrtc['sdpPath']),
+      webrtcSdpUrl: combineUrl(_sdpPath),
       webrtcIceServers: parseIceServers(webrtc['iceServers']),
     );
   }

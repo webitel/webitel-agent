@@ -209,7 +209,7 @@ Future<void> initialize(String token) async {
   final socket = WebitelSocket(
     config: WebitelSocketConfig(
       url: AppConfig.instance.webitelWsUrl,
-      mediaUploadUrl: AppConfig.instance.mediaUploadUrl,
+      baseUrl: AppConfig.instance.baseUrl,
       token: token,
     ),
   );
@@ -309,7 +309,7 @@ Future<void> initialize(String token) async {
         try {
           await localRecorder!.stopRecording();
 
-          await Future.delayed(Duration(seconds: 4));
+          // await Future.delayed(Duration(seconds: 4));
 
           final success = await localRecorder!.uploadVideoWithRetry();
           if (!success) {
@@ -318,7 +318,7 @@ Future<void> initialize(String token) async {
         } catch (e) {
           logger.error('Error during local recording stop or upload: $e');
         } finally {
-          await LocalVideoRecorder.cleanupOldVideos(daysToKeep: 1);
+          await LocalVideoRecorder.cleanupOldVideos();
           localRecorder = null;
         }
       }
@@ -372,7 +372,7 @@ Future<void> initialize(String token) async {
         if (success != null && !success) {
           logger.error('Video upload failed after all retries');
         }
-        await LocalVideoRecorder.cleanupOldVideos(daysToKeep: 1);
+        await LocalVideoRecorder.cleanupOldVideos();
         localRecorder = null;
       }
     },
@@ -380,7 +380,7 @@ Future<void> initialize(String token) async {
 
   if (AppConfig.instance.screenshotEnabled) {
     final screenshotService = ScreenshotSenderService(
-      baseUrl: AppConfig.instance.mediaUploadUrl,
+      baseUrl: AppConfig.instance.baseUrl,
     );
     screenshotService.start();
   }
