@@ -84,14 +84,3 @@ Use the **"Upload configuration"** option in the tray menu to manually load your
 | **`video.saveLocally`**       | Save captured video/screenshot locally (in the `gen/` folder) using FFmpeg for encoding |
 
 -----
-
-## 💡 Notes
-
-* All configuration keys are nested under their respective sections (**server**, **media**, **logger
-  **, \*\***webrtc**, **video**).
-* Changing **`screenshotEnabled`** or **`saveLocally`** does not require restarting the app; it
-  updates dynamically if the configuration is reloaded.
-* **`iceServers`** can be left empty for default STUN servers or populated with TURN server
-  credentials if needed.
-* Local saving relies on **FFmpeg**, so **FFmpeg** must be installed and available in the system *
-  *PATH**
