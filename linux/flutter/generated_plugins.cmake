@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  desktop_screenshot
   file_selector_linux
   flutter_webrtc
   screen_capturer_linux

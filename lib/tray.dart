@@ -7,6 +7,7 @@ import 'package:tray_manager/tray_manager.dart';
 import 'package:webitel_agent_flutter/gen/assets.gen.dart';
 import 'package:webitel_agent_flutter/storage.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
+import 'package:webitel_agent_flutter/main.dart';
 
 import 'config/config.dart';
 import 'logger.dart';
@@ -131,13 +132,27 @@ class TrayService with TrayListener {
         logger.info('TrayService: Config uploaded successfully.');
         await trayManager.setToolTip('✅ Config updated');
 
+        await _secureStorage.deleteAccessToken();
+        await _secureStorage.deleteAgentId();
+
         if (onConfigUploaded != null) {
           await onConfigUploaded!();
         }
+
+        unawaited(_forceLoginFlow());
       }
     } catch (e, s) {
       logger.error('TrayService: Failed to upload config: $e\n$s');
       await trayManager.setToolTip('❌ Config upload failed');
+    }
+  }
+
+  Future<void> _forceLoginFlow() async {
+    try {
+      await waitForNavigator();
+      await performLoginFlow();
+    } catch (e) {
+      logger.error('TrayService: Failed to trigger forced login: $e');
     }
   }
 

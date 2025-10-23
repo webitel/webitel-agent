@@ -21,6 +21,7 @@ dependencies:
 
   cupertino_icons: ^1.0.8
   tray_manager: ^0.5.0
+  desktop_screenshot: ^0.0.4
   flutter_dotenv: ^5.2.1
   flutter_inappwebview: ^6.1.5
   http: ^1.4.0

@@ -4,9 +4,11 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:screen_capturer/screen_capturer.dart';
 import 'package:webitel_agent_flutter/storage.dart';
+import 'package:desktop_screenshot/desktop_screenshot.dart';
 
 import 'config/config.dart';
 import 'logger.dart';
@@ -75,6 +77,13 @@ class ScreenshotSenderService {
 
   Future<void> screenshot() async {
     try {
+      Uint8List? bytes;
+      String filename =
+          'screenshot-${DateTime.now().millisecondsSinceEpoch}.png';
+
+      // -------------------------------
+      // 🖥️ macOS — screen_capturer
+      // -------------------------------
       if (defaultTargetPlatform == TargetPlatform.macOS) {
         final allowed = await ScreenCapturer.instance.isAccessAllowed();
         if (!allowed) {
@@ -82,39 +91,71 @@ class ScreenshotSenderService {
           logger.warn('macOS screen capture permission not granted.');
           return;
         }
+
+        final directory = await getTemporaryDirectory();
+        final safeTimestamp = DateTime.now().toIso8601String().replaceAll(
+          ':',
+          '-',
+        );
+        final fullPath = '${directory.path}/$safeTimestamp.png';
+
+        final capture = await ScreenCapturer.instance.capture(
+          mode: CaptureMode.screen,
+          copyToClipboard: false,
+          silent: false,
+          imagePath: fullPath,
+        );
+
+        if (capture == null) {
+          logger.warn('Screenshot capture returned null.');
+          return;
+        }
+
+        final file = File(fullPath);
+        if (!await file.exists()) {
+          logger.warn('Screenshot file not found at $fullPath');
+          return;
+        }
+
+        bytes = await file.readAsBytes();
+        filename = '$safeTimestamp.png';
       }
-
-      final directory = await getTemporaryDirectory();
-      final filename = '${DateTime.now().toIso8601String()}.png';
-      final fullPath = '${directory.path}/$filename';
-
-      final capture = await ScreenCapturer.instance.capture(
-        mode: CaptureMode.screen,
-        copyToClipboard: false,
-        silent: false,
-        imagePath: fullPath,
-      );
-
-      if (capture == null) {
-        logger.warn('Screenshot capture returned null.');
+      // -------------------------------
+      // 🪟 Windows — desktop_screenshot
+      // -------------------------------
+      else if (defaultTargetPlatform == TargetPlatform.windows) {
+        final controller = DesktopScreenshot();
+        final image = await controller.getScreenshot();
+        if (image == null || image.isEmpty) {
+          logger.warn('Windows screenshot failed (null or empty)');
+          return;
+        }
+        bytes = image;
+      } else {
+        logger.warn('Unsupported platform: $defaultTargetPlatform');
         return;
       }
 
-      final file = File(fullPath);
-      if (!await file.exists()) {
-        logger.warn('Screenshot file not found at $fullPath');
-        return;
-      }
-
-      final bytes = await file.readAsBytes();
       if (bytes.isEmpty) {
-        logger.warn('Screenshot file is empty.');
+        logger.warn('Screenshot bytes are empty.');
         return;
       }
 
+      // final projectDir = Directory.current;
+      // final genDir = Directory('${projectDir.path}/gen');
+      // if (!await genDir.exists()) {
+      //   await genDir.create(recursive: true);
+      // }
+
+      // final localFile = File('${genDir.path}/$filename');
+      // await localFile.writeAsBytes(bytes);
+      // logger.info('Screenshot saved locally: ${localFile.path}');
+
+      // -------------------------------
+      // ☁️ Upload MultipartRequest
+      // -------------------------------
       final agentId = await _secureStorage.readAgentId() ?? 'unknown_user';
       final agentToken = await _secureStorage.readAccessToken() ?? 'unknown';
-
       const channel = 'screenshot';
 
       final uri = Uri.parse(
@@ -127,21 +168,18 @@ class ScreenshotSenderService {
         },
       );
 
-      final res = await http.post(
+      final response = await http.post(
         uri,
         headers: {'Content-Type': 'image/png'},
         body: bytes,
       );
 
-      if (res.statusCode >= 200 && res.statusCode < 300) {
+      if (response.statusCode >= 200 && response.statusCode < 300) {
         logger.info('Screenshot uploaded: $filename');
       } else {
-        logger.error('Upload failed: ${res.statusCode} — ${res.body}');
-      }
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        logger.info('Screenshot uploaded: $filename');
-      } else {
-        logger.error('Upload failed: ${res.statusCode} — ${res.body}');
+        logger.error(
+          'Upload failed: ${response.statusCode} — ${response.body}',
+        );
       }
     } catch (e, stack) {
       logger.error('Screenshot send failed: $e\n$stack');
