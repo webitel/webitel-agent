@@ -68,19 +68,19 @@ Use the **"Upload configuration"** option in the tray menu to manually load your
 
 ## 🧩 Configuration Reference (Updated)
 
-| Key                           | Description                                                                             |
-|:------------------------------|:----------------------------------------------------------------------------------------|
-| **`server.baseUrl`**          | Base URL of the Webitel server                                                          |
-| **`media.screenshotEnabled`** | Enable/disable periodic screenshots (`true`/`false`)                                    |
-| **`logger.info`**             | Enable info-level logging                                                               |
-| **`logger.debug`**            | Enable debug-level logging                                                              |
-| **`logger.error`**            | Enable error-level logging                                                              |
-| **`logger.toFile`**           | Enable writing logs to a file                                                           |
-| **`logger.filePath`**         | Path to log file (relative to project or absolute)                                      |
-| **`webrtc.iceServers`**       | List of STUN/TURN servers for WebRTC sessions                                           |
-| **`video.width`**             | Width of the captured video/screenshot in pixels                                        |
-| **`video.height`**            | Height of the captured video/screenshot in pixels                                       |
-| **`video.framerate`**         | Capture frame rate in frames per second (FPS)                                           |
-| **`video.saveLocally`**       | Save captured video/screenshot locally (in the `gen/` folder) using FFmpeg for encoding |
+| Key                           | Description                                           |
+|:------------------------------|:------------------------------------------------------|
+| **`server.baseUrl`**          | Base URL of the Webitel server                        |
+| **`media.screenshotEnabled`** | Enable/disable periodic screenshots (`true`/`false`)  |
+| **`logger.info`**             | Enable info-level logging                             |
+| **`logger.debug`**            | Enable debug-level logging                            |
+| **`logger.error`**            | Enable error-level logging                            |
+| **`logger.toFile`**           | Enable writing logs to a file                         |
+| **`logger.filePath`**         | Path to log file (relative to project or absolute)    |
+| **`webrtc.iceServers`**       | List of STUN/TURN servers for WebRTC sessions         |
+| **`video.width`**             | Width of the captured video/screenshot in pixels      |
+| **`video.height`**            | Height of the captured video/screenshot in pixels     |
+| **`video.framerate`**         | Capture frame rate in frames per second (FPS)         |
+| **`video.saveLocally`**       | Save captured video locally using FFmpeg for encoding |
 
 -----
