@@ -1,86 +1,97 @@
 # 🖥 Webitel-Agent
 
-Cross-platform desktop application (Windows/macOS/Linux) for Webitel call center integration
+Cross-platform desktop application (Windows/macOS/Linux) for Webitel call center integration.
 
----
+-----
 
 ## 🚀 Key Features
 
-| Feature                      | Description                                                   |
-|------------------------------|---------------------------------------------------------------|
-| **🖼️ Periodic Screenshots** | Automatic screen captures (configurable)                      |
-| **🎥 Screen Recording**      | Starts recording based on Webitel socket events               |
-| **📡 Live Screen Streaming** | Real-time agent screen sharing via WebRTC for supervisors     |
-| **🧠 Configurable Behavior** | Controlled through `config.json` file                         |
-| **🪵 Logging**               | File-based logging of activities and errors (when enabled)    |
-| **🖱 Tray Menu**             | Manual configuration upload via "Upload configuration" option |
+| Feature                      | Description                                                       |
+|:-----------------------------|:------------------------------------------------------------------|
+| **🖼️ Periodic Screenshots** | Automatic screen captures (configurable via `config.json`)        |
+| **🎥 Screen Recording**      | Starts recording based on Webitel socket events                   |
+| **📡 Live Screen Streaming** | Real-time agent screen sharing via WebRTC for supervisors         |
+| **🧠 Configurable Behavior** | Controlled through the `config.json` file                         |
+| **🪵 Logging**               | File-based logging of activities and errors (when enabled)        |
+| **🖱 Tray Menu**             | Manual configuration upload via the "Upload configuration" option |
 
----
+-----
 
 ## 📁 Configuration
 
-Place a `config.json` file in the application support directory:
+Place a **`config.json`** file in the application support directory:
 
 ### 🔧 Platform Paths
 
-- **Windows**:  
-  `C:\Users\<username>\AppData\Roaming\Webitel-Agent`
-- **macOS**:  
-  `/Users/<username>/Library/Application Support/Webitel-Agent`
-- **Linux**:  
-  `/home/<username>/.config/Webitel-Agent`
+* **Windows**: `C:\Users\<username>\AppData\Roaming\Webitel-Agent`
+* **macOS**: `/Users/<username>/Library/Application Support/Webitel-Agent`
+* **Linux**: `/home/<username>/.config/Webitel-Agent`
 
-> 💡 Retrieve path programmatically:  
-> `final appSupportDir = await getApplicationSupportDirectory();`
+💡 **Retrieve path programmatically**:
+Use: `final appSupportDir = await getApplicationSupportDirectory();`
 
-⚠️ **Missing Config File?**  
-Use the "Upload configuration" option in the tray menu to manually load your configuration.
+⚠️ **Missing Config File?**
+Use the **"Upload configuration"** option in the tray menu to manually load your configuration.
 
----
+-----
 
-## 🧾 Example config.json
+## 🧾 Example `config.json`
 
 ```json
 {
-  "LOGIN_URL": "https://dev.webitel.com/",
-  "SCREENSHOT_ENABLED": false,
-  "MEDIA_UPLOAD_URL": "https://dev.webitel.com/api/v2/file/screenshot/upload?access_token=TOKEN&channel=screenshot",
-  "WEBITEL_WS_URL": "wss://dev.webitel.com/ws/websocket?application_name=desc_track&ver=1.0.0",
-  "LOG_LEVEL_INFO": true,
-  "LOG_LEVEL_DEBUG": true,
-  "LOG_LEVEL_ERROR": true,
-  "LOG_TO_FILE": true,
-  "LOG_FILE_PATH": "logs/app.log",
-  "WEBRTC_SDP_URL": "https://dev.webitel.com/api/webrtc/video",
-  "WEBRTC_ICE_SERVERS": [
-    {
-      "urls": [
-        "stun:stun.l.google.com:19302"
-      ]
-    }
-  ],
-  "VIDEO_WIDTH": 1920,
-  "VIDEO_HEIGHT": 1080,
-  "VIDEO_FRAMERATE": 30
+  "server": {
+    "baseUrl": "https://hostname"
+  },
+  "media": {
+    "screenshotEnabled": true
+  },
+  "logger": {
+    "info": true,
+    "debug": true,
+    "error": true,
+    "toFile": true,
+    "filePath": "logs/app.log"
+  },
+  "webrtc": {
+    "iceServers": []
+  },
+  "video": {
+    "width": 1920,
+    "height": 1080,
+    "framerate": 30,
+    "saveLocally": false
+  }
 }
 ```
 
----
+-----
 
-## 🧩 Configuration Reference
+## 🧩 Configuration Reference (Updated)
 
-| Key                    | Description                                          |
-|------------------------|------------------------------------------------------|
-| **LOGIN_URL**          | Authentication URL                                   |
-| **SCREENSHOT_ENABLED** | Enable/disable periodic screenshots (`true`/`false`) |
-| **MEDIA_UPLOAD_URL**   | Endpoint for uploading screenshots/recordings        |
-| **WEBITEL_WS_URL**     | WebSocket URL for call-center events                 |
-| **LOG_TO_FILE**        | Enable file logging (`true`/`false`)                 |
-| **LOG_FILE_PATH**      | Relative path to log file                            |
-| **LOG_LEVEL_***        | Log level controls (`INFO`, `DEBUG`, `ERROR`)        |
-| **WEBRTC_SDP_URL**     | URL for sending WebRTC SDP offers                    |
-| **WEBRTC_ICE_SERVERS** | STUN/TURN servers for WebRTC sessions                |
-| **VIDEO_WIDTH**        | Screen capture width (pixels)                        |
-| **VIDEO_HEIGHT**       | Screen capture height (pixels)                       |
-| **VIDEO_FRAMERATE**    | Capture frame rate (FPS)                             |
+| Key                           | Description                                                                             |
+|:------------------------------|:----------------------------------------------------------------------------------------|
+| **`server.baseUrl`**          | Base URL of the Webitel server                                                          |
+| **`media.screenshotEnabled`** | Enable/disable periodic screenshots (`true`/`false`)                                    |
+| **`logger.info`**             | Enable info-level logging                                                               |
+| **`logger.debug`**            | Enable debug-level logging                                                              |
+| **`logger.error`**            | Enable error-level logging                                                              |
+| **`logger.toFile`**           | Enable writing logs to a file                                                           |
+| **`logger.filePath`**         | Path to log file (relative to project or absolute)                                      |
+| **`webrtc.iceServers`**       | List of STUN/TURN servers for WebRTC sessions                                           |
+| **`video.width`**             | Width of the captured video/screenshot in pixels                                        |
+| **`video.height`**            | Height of the captured video/screenshot in pixels                                       |
+| **`video.framerate`**         | Capture frame rate in frames per second (FPS)                                           |
+| **`video.saveLocally`**       | Save captured video/screenshot locally (in the `gen/` folder) using FFmpeg for encoding |
 
+-----
+
+## 💡 Notes
+
+* All configuration keys are nested under their respective sections (**server**, **media**, **logger
+  **, \*\***webrtc**, **video**).
+* Changing **`screenshotEnabled`** or **`saveLocally`** does not require restarting the app; it
+  updates dynamically if the configuration is reloaded.
+* **`iceServers`** can be left empty for default STUN servers or populated with TURN server
+  credentials if needed.
+* Local saving relies on **FFmpeg**, so **FFmpeg** must be installed and available in the system *
+  *PATH**
