@@ -7,7 +7,6 @@ import 'package:tray_manager/tray_manager.dart';
 import 'package:webitel_agent_flutter/gen/assets.gen.dart';
 import 'package:webitel_agent_flutter/storage.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
-import 'package:webitel_agent_flutter/main.dart';
 
 import 'config/config.dart';
 import 'logger.dart';

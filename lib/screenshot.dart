@@ -2,13 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:desktop_screenshot/desktop_screenshot.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:screen_capturer/screen_capturer.dart';
 import 'package:webitel_agent_flutter/storage.dart';
-import 'package:desktop_screenshot/desktop_screenshot.dart';
 
 import 'config/config.dart';
 import 'logger.dart';
@@ -141,19 +140,6 @@ class ScreenshotSenderService {
         return;
       }
 
-      // final projectDir = Directory.current;
-      // final genDir = Directory('${projectDir.path}/gen');
-      // if (!await genDir.exists()) {
-      //   await genDir.create(recursive: true);
-      // }
-
-      // final localFile = File('${genDir.path}/$filename');
-      // await localFile.writeAsBytes(bytes);
-      // logger.info('Screenshot saved locally: ${localFile.path}');
-
-      // -------------------------------
-      // ☁️ Upload MultipartRequest
-      // -------------------------------
       final agentId = await _secureStorage.readAgentId() ?? 'unknown_user';
       final agentToken = await _secureStorage.readAccessToken() ?? 'unknown';
       const channel = 'screenshot';
