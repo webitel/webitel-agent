@@ -10,6 +10,7 @@ import 'package:webitel_agent_flutter/ws/ws.dart';
 
 import 'config/config.dart';
 import 'logger.dart';
+import 'main.dart';
 
 class TrayService with TrayListener {
   static final TrayService instance = TrayService._();
