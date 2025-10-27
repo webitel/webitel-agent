@@ -260,10 +260,11 @@ packages:
   desktop_screenshot:
     dependency: "direct main"
     description:
-      name: desktop_screenshot
-      sha256: c74a794ac472d004b6dbc0bb239a73d30089797aa0c97ff201f000b5cabfeca7
-      url: "https://pub.dev"
-    source: hosted
+      path: "."
+      ref: HEAD
+      resolved-ref: "01f1fdee0cd502fe6f5a951825e12f1e492f73dd"
+      url: "https://github.com/vhunkalo/desktop_screenshot.git"
+    source: git
     version: "0.0.4"
   fake_async:
     dependency: transitive
