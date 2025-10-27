@@ -151,6 +151,7 @@ class ScreenshotSenderService {
           'channel': channel,
           'access_token': agentToken,
           'thumbnail': 'true',
+          'name': filename
         },
       );
 
