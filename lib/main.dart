@@ -333,6 +333,8 @@ Future<void> initialize(String token) async {
     },
   );
 
+  final Map<String, Timer> screenRecordTimers = {};
+
   socket.onScreenRecordEvent(
     onStart: (body) async {
       webrtcStream?.stop();
@@ -340,7 +342,8 @@ Future<void> initialize(String token) async {
 
       final webrtcConfig = WebRTCConfig.fromEnv();
       final appConfig = AppConfig.instance;
-      final recordingId = body['root_id'] ?? 'unknown_recording';
+      final recordingId =
+          body['root_id'] ?? '00000000-0000-0000-0000-000000000000';
 
       if (appConfig.videoSaveLocally) {
         localRecorder = LocalVideoRecorder(
@@ -369,8 +372,37 @@ Future<void> initialize(String token) async {
       } catch (e) {
         logger.error('Failed to start screen recording stream: $e');
       }
+
+      screenRecordTimers[recordingId]?.cancel();
+      screenRecordTimers[recordingId] = Timer(
+        Duration(seconds: appConfig.maxCallRecordDuration),
+        () async {
+          logger.info('Max screen record duration reached for $recordingId');
+
+          webrtcStream?.stop();
+          webrtcStream = null;
+
+          if (localRecorder != null) {
+            await localRecorder?.stopRecording();
+            final success = await localRecorder?.uploadVideoWithRetry();
+            if (success != null && !success) {
+              logger.error('Video upload failed after all retries');
+            }
+            await LocalVideoRecorder.cleanupOldVideos();
+            localRecorder = null;
+          }
+
+          screenRecordTimers.remove(recordingId);
+        },
+      );
     },
     onStop: (body) async {
+      final recordingId =
+          body['root_id'] ?? '00000000-0000-0000-0000-000000000000';
+
+      screenRecordTimers[recordingId]?.cancel();
+      screenRecordTimers.remove(recordingId);
+
       webrtcStream?.stop();
       webrtcStream = null;
 

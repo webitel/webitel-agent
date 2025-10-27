@@ -16,6 +16,7 @@ class AppConfigModel {
   final int videoHeight;
   final int videoFramerate;
   final bool videoSaveLocally;
+  final int maxCallRecordDuration;
 
   // --- Logger configuration ---
   final bool logInfo;
@@ -37,6 +38,7 @@ class AppConfigModel {
     required this.videoHeight,
     required this.videoFramerate,
     required this.videoSaveLocally,
+    required this.maxCallRecordDuration,
     required this.logInfo,
     required this.logDebug,
     required this.logError,
@@ -103,6 +105,7 @@ class AppConfigModel {
       videoHeight: parseInt(video['height'], 720),
       videoFramerate: parseInt(video['framerate'], 30),
       videoSaveLocally: parseBool(video['saveLocally']),
+      maxCallRecordDuration: parseInt(video['maxCallRecordDuration'], 3600),
       logInfo: parseBool(logger['info']),
       logDebug: parseBool(logger['debug']),
       logError: parseBool(logger['error']),
