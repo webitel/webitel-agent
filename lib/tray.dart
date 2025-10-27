@@ -129,7 +129,7 @@ class TrayService with TrayListener {
         await AppConfig.load();
 
         logger.info('TrayService: Config uploaded successfully.');
-        await trayManager.setToolTip('✅ Config updated');
+        await trayManager.setToolTip('Config updated');
 
         if (onConfigUploaded != null) {
           await onConfigUploaded!();
@@ -137,7 +137,7 @@ class TrayService with TrayListener {
       }
     } catch (e, s) {
       logger.error('TrayService: Failed to upload config: $e\n$s');
-      await trayManager.setToolTip('❌ Config upload failed');
+      await trayManager.setToolTip('Config upload failed');
     }
   }
 

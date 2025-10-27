@@ -8,7 +8,7 @@ class AppTextStyles {
     fontSize: 16,
     height: 1.5,
     letterSpacing: 0,
-    color: Colors.white,
+    color: Colors.black,
   );
 
   static const TextStyle captureSubtitle = TextStyle(
@@ -17,6 +17,6 @@ class AppTextStyles {
     fontSize: 10,
     height: 1.6,
     letterSpacing: 0,
-    color: Colors.white,
+    color: Colors.black,
   );
 }

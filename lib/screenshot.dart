@@ -52,10 +52,10 @@ class ScreenshotSenderService {
         final items = bodyJson['items'];
         if (items is List && items.isNotEmpty) {
           final value = items.first['value'];
-          final seconds = int.tryParse(value.toString());
-          if (seconds != null && seconds > 0) {
-            _interval = Duration(seconds: seconds);
-            logger.info('Fetched screenshot interval: $seconds seconds');
+          final minutes = int.tryParse(value.toString());
+          if (minutes != null && minutes > 0) {
+            _interval = Duration(seconds: minutes * 60);
+            logger.info('Fetched screenshot interval: $minutes minutes');
           } else {
             logger.warn('Invalid interval format: $value');
           }
@@ -164,11 +164,15 @@ class ScreenshotSenderService {
         logger.info('Screenshot uploaded: $filename');
       } else {
         logger.error(
+          'Screenshot upload failed: ${response.statusCode} — ${response.body}',
+        );
+        throw Exception(
           'Upload failed: ${response.statusCode} — ${response.body}',
         );
       }
     } catch (e, stack) {
-      logger.error('Screenshot send failed: $e\n$stack');
+      logger.error('Screenshot error: $e\n$stack');
+      throw Exception('Screenshot error: $e\n$stack');
     }
   }
 }

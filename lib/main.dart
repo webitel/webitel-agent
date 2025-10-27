@@ -8,6 +8,7 @@ import 'package:webitel_agent_flutter/login.dart';
 import 'package:webitel_agent_flutter/presentation/page/main.dart';
 import 'package:webitel_agent_flutter/presentation/page/missing_config.dart';
 import 'package:webitel_agent_flutter/screenshot.dart';
+import 'package:webitel_agent_flutter/service/video/recorder_lifecycle.dart';
 import 'package:webitel_agent_flutter/service/video/video_recorder.dart';
 import 'package:webitel_agent_flutter/service/webrtc/core/config.dart';
 import 'package:webitel_agent_flutter/service/webrtc/session/stream_recorder.dart';
@@ -22,6 +23,8 @@ import 'config/model/config.dart';
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 LocalVideoRecorder? localRecorder;
+
+RecorderLifecycleHandler? _recorderLifecycle;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -200,6 +203,11 @@ Future<void> appStartupFlow() async {
   }
 
   await initialize(token ?? '');
+
+  _recorderLifecycle = RecorderLifecycleHandler(
+    getRecorder: () => localRecorder,
+  );
+  _recorderLifecycle!.init();
 }
 
 /// Initializes WebSocket, tray, services, and WebRTC stream handlers

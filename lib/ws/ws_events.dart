@@ -1,4 +1,4 @@
-enum WebSocketEvent { agentStatus, hello, call, notification, unknown }
+enum WebSocketEvent { agentStatus, hello, call, notification, channel, unknown }
 
 WebSocketEvent fromString(String? value) {
   switch (value) {
@@ -10,6 +10,8 @@ WebSocketEvent fromString(String? value) {
       return WebSocketEvent.call;
     case 'notification':
       return WebSocketEvent.notification;
+    case 'channel':
+      return WebSocketEvent.channel;
     default:
       return WebSocketEvent.unknown;
   }

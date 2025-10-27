@@ -1,11 +1,52 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
-import 'package:webitel_agent_flutter/gen/assets.gen.dart';
-import 'package:webitel_agent_flutter/presentation/theme/defaults.dart';
-import 'package:webitel_agent_flutter/presentation/theme/text_style.dart';
+import 'package:webitel_agent_flutter/logger.dart';
+import 'package:webitel_agent_flutter/ws/ws.dart';
 
-class MainPage extends StatelessWidget {
+import '../../gen/assets.gen.dart';
+import '../../service/video/recorder_lifecycle.dart';
+import '../theme/text_style.dart';
+
+class MainPage extends StatefulWidget {
   const MainPage({super.key});
+
+  @override
+  State<MainPage> createState() => _MainPageState();
+}
+
+class _MainPageState extends State<MainPage> {
+  RecorderLifecycleHandler? _recorderLifecycle;
+  WebitelSocket? _socket;
+
+  late final AppLifecycleListener _listener;
+
+  @override
+  void initState() {
+    _listener = AppLifecycleListener(
+      onDetach: () => _socket?.disconnect(),
+      onPause: () => _socket?.disconnect(),
+      onResume: () => _connectSocket(),
+      onRestart: () => _connectSocket(),
+    );
+    super.initState();
+  }
+
+  @override
+  void dispose() {
+    _recorderLifecycle?.dispose();
+    _listener.dispose();
+    super.dispose();
+  }
+
+  Future<void> _connectSocket() async {
+    try {
+      await _socket?.connect();
+      await _socket?.authenticate();
+      logger.info('[MainPage] Socket connected and authenticated');
+    } catch (e) {
+      logger.error('[MainPage] Socket connect/auth error: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -20,35 +61,49 @@ class MainPage extends StatelessWidget {
             colors: [Color(0xFFD93DF5), Color(0xFF1A2EB2)],
           ),
         ),
-        child: Column(
-          children: [
-            const Spacer(),
-            Center(
-              child: SvgPicture.asset(
-                Assets.icons.webitelMain,
-                width: 70,
-                height: 70,
-              ),
+        child: Center(
+          child: Container(
+            width: 380,
+            height: 260,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
             ),
-            const Spacer(),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: const [
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SvgPicture.asset(
+                  Assets.icons.webitelDeskTrackSuccessfully,
+                  width: 72,
+                  height: 72,
+                ),
+                const SizedBox(height: 24),
                 Text(
-                  Defaults.captureTitle,
-                  style: AppTextStyles.captureTitle,
+                  'You have been successfully logged in',
+                  style: AppTextStyles.captureTitle.copyWith(
+                    color: Colors.black87,
+                  ),
                   textAlign: TextAlign.center,
                 ),
-                SizedBox(height: 4),
+                const SizedBox(height: 8),
                 Text(
-                  Defaults.captureSubtitle,
-                  style: AppTextStyles.captureSubtitle,
+                  'You can now continue your work in Workspace',
+                  style: AppTextStyles.captureSubtitle.copyWith(
+                    color: Colors.black54,
+                  ),
                   textAlign: TextAlign.center,
                 ),
               ],
             ),
-            const SizedBox(height: 60),
-          ],
+          ),
         ),
       ),
     );

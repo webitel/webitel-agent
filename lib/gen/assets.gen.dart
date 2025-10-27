@@ -10,6 +10,10 @@
 class $AssetsIconsGen {
   const $AssetsIconsGen();
 
+  /// File path: assets/icons/Webitel DeskTrack successfully.svg
+  String get webitelDeskTrackSuccessfully =>
+      'assets/icons/Webitel DeskTrack successfully.svg';
+
   /// File path: assets/icons/offline.ico
   String get offline => 'assets/icons/offline.ico';
 
@@ -36,6 +40,7 @@ class $AssetsIconsGen {
 
   /// List of all assets
   List<String> get values => [
+    webitelDeskTrackSuccessfully,
     offline,
     online,
     pause,

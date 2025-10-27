@@ -72,8 +72,21 @@ class LocalVideoRecorder {
     return GetSystemMetrics(SM_CMONITORS);
   }
 
+  // RFC4122 UUID v1-v5 pattern
+  static final RegExp _uuidRegExp = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+  );
+
+  bool _isValidUuid(String id) => _uuidRegExp.hasMatch(id);
+
   Future<void> startRecording({required String recordingId}) async {
     if (_isRecording) return;
+
+    // Validate recordingId as UUID — reject if invalid
+    if (!_isValidUuid(recordingId)) {
+      _logger.error('Invalid recordingId provided: $recordingId');
+      throw ArgumentError('Invalid recordingId');
+    }
 
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     String? ffmpegCommand;

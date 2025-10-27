@@ -25,6 +25,10 @@ class WebitelSocket {
   final WebitelSocketConfig config;
   late String _token;
 
+  bool _screenRecordingActive = false;
+
+  Timer? _stateCheckTimer;
+
   late WebSocketChannel _channel;
   late StreamSubscription _wsSubscription;
   late StreamSubscription<List<ConnectivityResult>> _connectivitySubscription;
@@ -50,6 +54,12 @@ class WebitelSocket {
 
   ScreenStreamer? _screenCapturer;
   late final ScreenshotSenderService screenshotService;
+
+  final List<Map<String, dynamic>> _activeCalls = [];
+  final List<Map<String, dynamic>> _postProcessing = [];
+
+  bool get _shouldRecordScreen =>
+      _activeCalls.isNotEmpty || _postProcessing.isNotEmpty;
 
   WebitelSocket({required this.config}) {
     _token = config.token;
@@ -79,11 +89,25 @@ class WebitelSocket {
     );
     _isConnected = true;
     _startConnectivityMonitoring();
+    _startPeriodicStateCheck();
+  }
+
+  void _startPeriodicStateCheck() {
+    _stateCheckTimer?.cancel();
+    _stateCheckTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      logger.debug(
+        '[PeriodicCheck] activeCalls=${_activeCalls.length}, '
+        'postProcessing=${_postProcessing.length}, '
+        'isRecording=$_screenRecordingActive',
+      );
+      _updateScreenRecordingState();
+    });
   }
 
   Future<void> disconnect() async {
     logger.info('WebitelSocket: Disconnecting...');
     _isConnected = false;
+    _stateCheckTimer?.cancel();
     await _wsSubscription.cancel();
     await _channel.sink.close();
     _pendingRequests.clear();
@@ -100,6 +124,7 @@ class WebitelSocket {
     await _connectivitySubscription.cancel();
   }
 
+  //917
   void _onMessage(dynamic message) async {
     logger.debug('WebitelSocket: Received message: $message');
 
@@ -125,9 +150,126 @@ class WebitelSocket {
       case WebSocketEvent.notification:
         await _handleNotification(data);
         break;
+      case WebSocketEvent.channel:
+        _handleChannelEvent(data);
+        break;
       case WebSocketEvent.unknown:
         logger.debug('WebitelSocket: Unhandled event: ${data['event']}');
         break;
+    }
+  }
+
+  void _handleChannelEvent(Map<String, dynamic> data) {
+    final channel = data['data'];
+    final status = channel['status'];
+
+    final distribute = channel['distribute'] ?? {};
+    final hasReporting = distribute['has_reporting'] == true;
+
+    final attemptId = distribute['attempt_id'] ?? channel['attempt_id'];
+
+    if (attemptId == null) {
+      logger.debug('[ChannelEvent] No attemptId found, status=$status');
+      _updateScreenRecordingState();
+      return;
+    }
+
+    logger.debug('[ChannelEvent] attemptId=$attemptId, status=$status');
+
+    if (hasReporting) {
+      final existing = _postProcessing.any((c) => c['attempt_id'] == attemptId);
+
+      if (!existing) {
+        _postProcessing.add({
+          'attempt_id': attemptId,
+          'timestamp': channel['timestamp'],
+        });
+        logger.info('[PostProcessing] Added attempt $attemptId');
+      }
+    }
+
+    if (status == 'missed' || status == 'waiting' || status == 'wrap_time') {
+      final sizeBefore = _postProcessing.length;
+      _postProcessing.removeWhere((c) => c['attempt_id'] == attemptId);
+      final sizeAfter = _postProcessing.length;
+
+      if (sizeBefore > sizeAfter) {
+        logger.info('[PostProcessing] Removed attempt $attemptId ($status)');
+      }
+    }
+
+    _updateScreenRecordingState();
+  }
+
+  String? _lastCallId;
+
+  final _uuidRegExp = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+  );
+
+  // Validates UUID according to RFC 4122 standard (universally unique identifier format),
+  // supporting versions 1–5. Example format: 550e8400-e29b-41d4-a716-446655440000
+  bool _isValidUuid(String id) {
+    return _uuidRegExp.hasMatch(id);
+  }
+
+  void _handleCallEvent(Map<String, dynamic> data) {
+    final call = data['data']?['call'];
+
+    final callEvent = call['event'];
+    final rawCallId = call['id']?.toString();
+    final rawParentId = call['data']?['parent_id']?.toString();
+    final attemptId = call['data']?['queue']?['attempt_id'];
+    final recordScreen = call['record_screen'] as bool? ?? false;
+
+    final callId =
+        (rawCallId != null && _isValidUuid(rawCallId)) ? rawCallId : null;
+    final parentId =
+        (rawParentId != null && _isValidUuid(rawParentId)) ? rawParentId : null;
+
+    switch (callEvent) {
+      case 'ringing':
+        if (callId != null && recordScreen) {
+          _onCallRinging?.call(parentId ?? callId);
+          _lastCallId = callId;
+          _activeCalls.add({'callId': callId, 'attempt_id': attemptId});
+          _updateScreenRecordingState();
+        } else {
+          logger.warn(
+            'WebitelSocket: Received ringing event with invalid call id: $rawCallId',
+          );
+        }
+        break;
+
+      case 'hangup':
+        if (callId != null) {
+          _activeCalls.removeWhere((c) => c['callId'] == callId);
+          _updateScreenRecordingState();
+        } else {
+          logger.warn(
+            'WebitelSocket: Received hangup event with invalid call id: $rawCallId',
+          );
+        }
+        break;
+
+      default:
+        logger.debug('Unhandled callEvent: $callEvent');
+    }
+  }
+
+  void _updateScreenRecordingState() {
+    final shouldRecord = _activeCalls.isNotEmpty || _postProcessing.isNotEmpty;
+
+    if (shouldRecord && !_screenRecordingActive) {
+      _screenRecordingActive = true;
+      logger.info('[ScreenRecorder] Starting screen recording...');
+      onScreenRecordStart?.call({'reason': 'active_calls_or_postprocessing'});
+    } else if (!shouldRecord && _screenRecordingActive) {
+      _screenRecordingActive = false;
+      logger.info('[ScreenRecorder] Stopping screen recording...');
+      onScreenRecordStop?.call({'reason': 'no_active_calls_or_postprocessing'});
+
+      _onCallHangup?.call(_lastCallId ?? 'unknown');
     }
   }
 
@@ -190,65 +332,51 @@ class WebitelSocket {
     }
   }
 
-  void _handleCallEvent(Map<String, dynamic> data) {
-    final call = data['data']?['call'];
-    final callEvent = call?['event'];
-    final recordScreen = call?['record_screen'] as bool? ?? false;
-    final callId = call?['id']?.toString() ?? 'unknown';
-
-    switch (callEvent) {
-      case 'ringing':
-        // if (recordScreen) {
-        _onCallRinging?.call(callId);
-        logger.info(
-          '[ScreenRecorder] Starting screen recording for call ${call?['id']}',
-        );
-        // }
-        break;
-
-      case 'hangup':
-        // if (recordScreen) {
-        _onCallHangup?.call(callId);
-        logger.info(
-          '[ScreenRecorder] Stopping screen recording for call ${call?['id']}',
-        );
-        // }
-        break;
-    }
-  }
-
   Future<void> _handleNotification(Map<String, dynamic> data) async {
     final notif = data['data']?['notification'];
     final actionStr = notif?['action'] as String?;
     final action = NotificationAction.fromString(actionStr);
     final body = Map<String, dynamic>.from(notif?['body'] ?? {});
+    final ackId = body['ack_id'] as String?;
 
-    switch (action) {
-      case NotificationAction.screenShare:
-        _screenCapturer?.close('new screen_share');
-        _screenCapturer = await ScreenStreamer.fromNotification(
-          notif: notif,
-          logger: logger,
-          onClose: () => logger.info('[WebitelSocket] Screen stream closed'),
-          onAccept: request,
-        );
-        break;
+    String? ackError;
 
-      case NotificationAction.screenshot:
-        await screenshotService.screenshot();
-        break;
+    try {
+      switch (action) {
+        case NotificationAction.screenShare:
+          _screenCapturer?.close('new screen_share');
+          _screenCapturer = await ScreenStreamer.fromNotification(
+            notif: notif,
+            logger: logger,
+            onClose: () => logger.info('[WebitelSocket] Screen stream closed'),
+            onAccept: request,
+          );
+          break;
 
-      case NotificationAction.screenRecordStart:
-        onScreenRecordStart?.call(body);
-        break;
+        case NotificationAction.screenshot:
+          await screenshotService.screenshot();
+          break;
 
-      case NotificationAction.screenRecordStop:
-        onScreenRecordStop?.call(body);
-        break;
+        case NotificationAction.screenRecordStart:
+          onScreenRecordStart?.call(body);
+          break;
 
-      case NotificationAction.unknown:
-        logger.debug('[WebitelSocket] Unknown notification action: $actionStr');
-        break;
+        case NotificationAction.screenRecordStop:
+          onScreenRecordStop?.call(body);
+          break;
+
+        case NotificationAction.unknown:
+          logger.debug(
+            '[WebitelSocket] Unknown notification action: $actionStr',
+          );
+          break;
+      }
+    } catch (e) {
+      ackError = e.toString();
+      logger.error('[WebitelSocket] Error logging notification', e);
+    }
+    if (ackId != null) {
+      await ack(ackId, ackError);
     }
   }
 
@@ -377,6 +505,13 @@ class WebitelSocket {
   Future<AgentSession> getAgentSession() async {
     final response = await request(SocketActions.agentSession);
     return AgentSession.fromJson(response);
+  }
+
+  Future<void> ack(String id, String? err) async {
+    final _ = await request(SocketActions.ack, {
+      'ack_id': id,
+      if (err != null) 'error': err,
+    });
   }
 }
 

@@ -6,15 +6,6 @@ version: 1.0.0+1
 environment:
   sdk: ^3.7.2
 
-msix_config:
-  display_name: Webitel DeskTrack
-  publisher_display_name: Webitel
-  identity_name: webitel.desktrack
-  msix_version: 1.0.0.0
-  certificate_path: "C:\\certs\\webitel.pfx"
-  certificate_password: "it-sfera.pass1"
-
-
 dependencies:
   flutter:
     sdk: flutter
