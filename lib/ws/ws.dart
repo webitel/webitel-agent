@@ -6,7 +6,6 @@ import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:webitel_agent_flutter/config/config.dart';
 import 'package:webitel_agent_flutter/service/webrtc/session/screen_streamer.dart';
 import 'package:webitel_agent_flutter/ws/ws_config.dart';
 
@@ -29,8 +28,6 @@ class WebitelSocket {
   bool _screenRecordingActive = false;
 
   Timer? _stateCheckTimer;
-
-  final Map<String, Timer> _callRecordTimers = {};
 
   late WebSocketChannel _channel;
   late StreamSubscription _wsSubscription;
@@ -232,21 +229,16 @@ class WebitelSocket {
 
     switch (callEvent) {
       case 'ringing':
-        if (callId != null) {
+        if (callId != null
+        //  && recordScreen
+        ) {
           _onCallRinging?.call(parentId ?? callId);
           _lastCallId = callId;
           _activeCalls.add({'callId': callId, 'attempt_id': attemptId});
           _updateScreenRecordingState();
-
-          _callRecordTimers[callId]?.cancel();
-          _callRecordTimers[callId] = Timer(
-            Duration(seconds: AppConfig.instance.maxCallRecordDuration),
-            () {
-              logger.info('Max call record duration reached for call $callId');
-              onScreenRecordStop?.call({'callId': callId});
-              _activeCalls.removeWhere((c) => c['callId'] == callId);
-              _updateScreenRecordingState();
-            },
+        } else {
+          logger.warn(
+            'WebitelSocket: Received ringing event with invalid call id: $rawCallId',
           );
         }
         break;
@@ -254,9 +246,11 @@ class WebitelSocket {
       case 'hangup':
         if (callId != null) {
           _activeCalls.removeWhere((c) => c['callId'] == callId);
-          _callRecordTimers[callId]?.cancel();
-          _callRecordTimers.remove(callId);
           _updateScreenRecordingState();
+        } else {
+          logger.warn(
+            'WebitelSocket: Received hangup event with invalid call id: $rawCallId',
+          );
         }
         break;
 

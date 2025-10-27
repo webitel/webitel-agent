@@ -273,10 +273,13 @@ Future<void> initialize(String token) async {
 
   StreamRecorder? webrtcStream;
 
+  final Map<String, Timer> callRecordTimers = {};
+
   socket.onCallEvent(
     onRinging: (callId) async {
       webrtcStream?.stop();
       localRecorder?.stopRecording();
+      callRecordTimers[callId]?.cancel();
 
       final webrtcConfig = WebRTCConfig.fromEnv();
       final appConfig = AppConfig.instance;
@@ -308,17 +311,44 @@ Future<void> initialize(String token) async {
       } catch (e) {
         logger.error('Failed to start WebRTC stream: $e');
       }
+
+      callRecordTimers[callId] = Timer(
+        Duration(seconds: appConfig.maxCallRecordDuration),
+        () async {
+          logger.info('Max call record duration reached for call $callId');
+
+          webrtcStream?.stop();
+          webrtcStream = null;
+
+          if (localRecorder != null) {
+            try {
+              await localRecorder!.stopRecording();
+              final success = await localRecorder!.uploadVideoWithRetry();
+              if (!success) {
+                logger.error('Video upload failed after all retries');
+              }
+            } catch (e) {
+              logger.error('Error during local recording stop or upload: $e');
+            } finally {
+              await LocalVideoRecorder.cleanupOldVideos();
+              localRecorder = null;
+            }
+          }
+
+          callRecordTimers.remove(callId);
+        },
+      );
     },
     onHangup: (callId) async {
+      callRecordTimers[callId]?.cancel();
+      callRecordTimers.remove(callId);
+
       webrtcStream?.stop();
       webrtcStream = null;
 
       if (localRecorder != null) {
         try {
           await localRecorder!.stopRecording();
-
-          // await Future.delayed(Duration(seconds: 4));
-
           final success = await localRecorder!.uploadVideoWithRetry();
           if (!success) {
             logger.error('Video upload failed after all retries');
