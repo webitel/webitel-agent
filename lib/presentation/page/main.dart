@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
+import 'package:webitel_agent_flutter/defaults/version.dart';
 import 'package:webitel_agent_flutter/logger.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 
@@ -61,49 +62,71 @@ class _MainPageState extends State<MainPage> {
             colors: [Color(0xFFD93DF5), Color(0xFF1A2EB2)],
           ),
         ),
-        child: Center(
-          child: Container(
-            width: 380,
-            height: 260,
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
+        child: Stack(
+          children: [
+            Center(
+              child: Container(
+                width: 380,
+                height: 260,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 32,
                 ),
-              ],
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SvgPicture.asset(
+                      Assets.icons.webitelDeskTrackSuccessfully,
+                      width: 72,
+                      height: 72,
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      'You have been successfully logged in',
+                      style: AppTextStyles.captureTitle.copyWith(
+                        color: Colors.black87,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'You can now continue your work in Workspace',
+                      style: AppTextStyles.captureSubtitle.copyWith(
+                        color: Colors.black54,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
             ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SvgPicture.asset(
-                  Assets.icons.webitelDeskTrackSuccessfully,
-                  width: 72,
-                  height: 72,
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  'You have been successfully logged in',
-                  style: AppTextStyles.captureTitle.copyWith(
-                    color: Colors.black87,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'You can now continue your work in Workspace',
-                  style: AppTextStyles.captureSubtitle.copyWith(
-                    color: Colors.black54,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
+            // Positioned(
+            //   bottom: 16,
+            //   left: 0,
+            //   right: 0,
+            //   child: Center(
+            //     child: Text(
+            //       'v${AppVersions.fullVersion}',
+            //       style: TextStyle(
+            //         color: Colors.white.withOpacity(0.7),
+            //         fontSize: 12,
+            //         fontWeight: FontWeight.w400,
+            //       ),
+            //     ),
+            //   ),
+            // ),
+          ],
         ),
       ),
     );

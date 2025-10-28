@@ -154,7 +154,7 @@ class LocalVideoRecorder {
 
       if (screenIndices.length == 1) {
         ffmpegCommand =
-            '$inputArgs -vf "scale=1280:720" -c:v h264_videotoolbox -pix_fmt yuv420p -b:v 5M -y $filePath';
+            '$inputArgs -vf "scale=1280:720" -c:v h264_videotoolbox -pix_fmt yuv420p -b:v 5M -movflags +faststart -y $filePath';
       } else {
         final stackChain = screenIndices
             .asMap()
@@ -170,7 +170,7 @@ class LocalVideoRecorder {
 
         ffmpegCommand =
             '$inputArgs -filter_complex "$stackChain;$inputChain hstack=inputs=${screenIndices.length}" '
-            '-c:v h264_videotoolbox -pix_fmt yuv420p -b:v 5M -y $filePath';
+            '-c:v h264_videotoolbox -pix_fmt yuv420p -b:v 5M -movflags +faststart -y $filePath';
       }
     } else if (Platform.isWindows) {
       _startRecordingWindows(filePath);
@@ -220,6 +220,7 @@ class LocalVideoRecorder {
       '-preset', 'ultrafast',
       '-pix_fmt', 'yuv420p',
       '-b:v', '5M',
+      '-movflags', '+faststart',
       '-y', filePath,
     ], runInShell: true);
 
