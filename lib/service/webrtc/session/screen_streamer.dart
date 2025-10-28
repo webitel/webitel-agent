@@ -91,8 +91,6 @@ class ScreenStreamer {
       _pc = await createPeerConnection({
         'iceServers': iceServers,
         'iceConnectionReceivingTimeout': 15000,
-        'iceTransportPolicy': 'all',
-        'tcpCandidatePolicy': 'enabled',
       });
 
       // await _pc!.setConfiguration({

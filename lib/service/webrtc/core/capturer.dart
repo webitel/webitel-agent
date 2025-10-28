@@ -9,25 +9,29 @@ Future<MediaStream?> captureDesktopScreen() async {
   final int height = config.videoHeight;
   final int frameRate = config.videoFramerate;
 
-  final Map<String, dynamic> constraints = {
-    'video': {
-      'displaySurface': 'monitor',
-      'mandatory': {
-        'maxWidth': width + 10,
-        'minWidth': width - 10,
-        'maxHeight': height + 10,
-        'minHeight': height - 10,
-        'maxFramerate': frameRate,
-        'frameRate': frameRate.toDouble(),
-      },
-    },
-    'audio': false,
-  };
-
   try {
     logger.info(
       '[Capturer] Starting screen capture: width=$width, height=$height, frameRate=$frameRate',
     );
+
+    List<DesktopCapturerSource> sources = await desktopCapturer.getSources(
+      types: [SourceType.Screen, SourceType.Window],
+    );
+
+    final Map<String, dynamic> constraints = {
+      'video': {
+        'deviceId': sources.first.id,
+        'mandatory': {
+          'maxWidth': width + 10,
+          'minWidth': width - 10,
+          'maxHeight': height + 10,
+          'minHeight': height - 10,
+          'maxFramerate': frameRate,
+          'frameRate': frameRate.toDouble(),
+        },
+      },
+      'audio': false,
+    };
 
     final stream = await mediaDevices.getDisplayMedia(constraints);
 
