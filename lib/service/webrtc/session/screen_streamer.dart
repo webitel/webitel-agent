@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_agent_flutter/logger.dart';
+import 'package:webitel_agent_flutter/main.dart';
+import 'package:webitel_agent_flutter/service/video/video_recorder.dart';
 import 'package:webitel_agent_flutter/service/webrtc/core/capturer.dart';
 
 typedef OnReceiverClosed = void Function();
@@ -131,30 +133,77 @@ class ScreenStreamer {
         }
       };
 
-      // Handle ICE connection state changes
       _pc!.onIceConnectionState = (RTCIceConnectionState state) async {
         logger.debug('[ScreenStreamer] ICE connection state: $state');
 
         switch (state) {
           case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
-            await _pc?.restartIce();
-            break;
           case RTCIceConnectionState.RTCIceConnectionStateFailed:
-            logger.error(
-              '[ScreenStreamer] ICE state $state - closing connection',
+            logger.warn(
+              '[ScreenStreamer] ICE state $state - stopping local recording',
             );
-            close('ICE $state');
+
+            // Stop local screen recorder
+            if (screenRecorder != null) {
+              try {
+                await screenRecorder!.stopRecording();
+                final success = await screenRecorder!.uploadVideoWithRetry();
+                if (!success)
+                  logger.error('Screen video upload failed on ICE $state');
+              } catch (e) {
+                logger.error(
+                  'Error stopping screen recorder on ICE $state: $e',
+                );
+              } finally {
+                await LocalVideoRecorder.cleanupOldVideos();
+                screenRecorder = null;
+              }
+            }
+
+            // Stop screen WebRTC stream
+            screenStream?.stop();
+            screenStream = null;
+
+            // Stop local call recorder if any
+            if (callRecorder != null) {
+              try {
+                await callRecorder!.stopRecording();
+                final success = await callRecorder!.uploadVideoWithRetry();
+                if (!success)
+                  logger.error('Call video upload failed on ICE $state');
+              } catch (e) {
+                logger.error('Error stopping call recorder on ICE $state: $e');
+              } finally {
+                await LocalVideoRecorder.cleanupOldVideos();
+                callRecorder = null;
+              }
+            }
+
+            // Stop call WebRTC stream
+            callStream?.stop();
+            callStream = null;
+
+            if (state ==
+                RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+              await _pc?.restartIce();
+            } else {
+              close('ICE $state');
+            }
             break;
+
           case RTCIceConnectionState.RTCIceConnectionStateClosed:
             close('ICE $state');
             logger.warn('[ScreenStreamer] ICE connection closed manually');
             break;
+
           case RTCIceConnectionState.RTCIceConnectionStateConnected:
             logger.info('[ScreenStreamer] ICE connected');
             break;
+
           case RTCIceConnectionState.RTCIceConnectionStateCompleted:
             logger.info('[ScreenStreamer] ICE completed');
             break;
+
           default:
             break;
         }
