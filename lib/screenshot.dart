@@ -1,21 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:desktop_screenshot/desktop_screenshot.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:screen_capturer/screen_capturer.dart';
 import 'package:webitel_agent_flutter/storage.dart';
-
 import 'config/config.dart';
 import 'logger.dart';
 
 class ScreenshotSenderService {
   final String baseUrl;
-  Timer? _timer;
-  Duration _interval = const Duration(seconds: 10);
+  Timer? _screenshotTimer;
+  Timer? _intervalFetcherTimer;
+  Duration _interval = const Duration(minutes: 30); // Default interval
   bool _isRunning = false;
 
   final _secureStorage = SecureStorageService();
@@ -25,16 +24,26 @@ class ScreenshotSenderService {
   void start() {
     if (_isRunning) return;
     _isRunning = true;
-
-    _fetchIntervalAndStartTimer();
+    _startIntervalFetcher(); // Start periodic interval check
   }
 
   void stop() {
-    _timer?.cancel();
+    _screenshotTimer?.cancel();
+    _intervalFetcherTimer?.cancel();
     _isRunning = false;
   }
 
-  Future<void> _fetchIntervalAndStartTimer() async {
+  /// Fetches the screenshot interval every 10 seconds
+  /// and restarts the screenshot timer if the interval changes.
+  void _startIntervalFetcher() {
+    _fetchAndApplyInterval(); // Run immediately
+    _intervalFetcherTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _fetchAndApplyInterval(),
+    );
+  }
+
+  Future<void> _fetchAndApplyInterval() async {
     try {
       final token = await _secureStorage.readAccessToken();
       if (token == null) {
@@ -45,6 +54,7 @@ class ScreenshotSenderService {
       final uri = Uri.parse(
         '${AppConfig.instance.baseUrl}/api/settings?name=screenshot_interval',
       );
+
       final res = await http.get(uri, headers: {'X-Webitel-Access': token});
 
       if (res.statusCode == 200) {
@@ -54,13 +64,17 @@ class ScreenshotSenderService {
           final value = items.first['value'];
           final minutes = int.tryParse(value.toString());
           if (minutes != null && minutes > 0) {
-            _interval = Duration(seconds: minutes * 60);
-            logger.info('Fetched screenshot interval: $minutes minutes');
+            final newInterval = Duration(minutes: minutes);
+
+            // If the interval changed, restart the timer
+            if (newInterval != _interval) {
+              _interval = newInterval;
+              logger.info('Updated screenshot interval: $_interval');
+              _restartScreenshotTimer();
+            }
           } else {
             logger.warn('Invalid interval format: $value');
           }
-        } else {
-          logger.warn('No items in interval response: ${res.body}');
         }
       } else {
         logger.warn('Interval fetch failed: ${res.statusCode} — ${res.body}');
@@ -68,12 +82,15 @@ class ScreenshotSenderService {
     } catch (e, stack) {
       logger.error('Failed to fetch interval: $e\n$stack');
     }
-
-    // Always start timer, even if API failed
-    _timer = Timer.periodic(_interval, (_) => screenshot());
-    screenshot(); // First run immediately
   }
 
+  void _restartScreenshotTimer() {
+    _screenshotTimer?.cancel();
+    _screenshotTimer = Timer.periodic(_interval, (_) => screenshot());
+    screenshot(); // Trigger first capture immediately
+  }
+
+  /// Captures a screenshot depending on the platform and uploads it to the server.
   Future<void> screenshot() async {
     try {
       Uint8List? bytes;
@@ -81,7 +98,7 @@ class ScreenshotSenderService {
           'screenshot-${DateTime.now().millisecondsSinceEpoch}.png';
 
       // -------------------------------
-      // 🖥️ macOS — screen_capturer
+      // 🖥️ macOS — using screen_capturer
       // -------------------------------
       if (defaultTargetPlatform == TargetPlatform.macOS) {
         final allowed = await ScreenCapturer.instance.isAccessAllowed();
@@ -101,7 +118,7 @@ class ScreenshotSenderService {
         final capture = await ScreenCapturer.instance.capture(
           mode: CaptureMode.screen,
           copyToClipboard: false,
-          silent: false,
+          silent: true,
           imagePath: fullPath,
         );
 
@@ -120,7 +137,7 @@ class ScreenshotSenderService {
         filename = '$safeTimestamp.png';
       }
       // -------------------------------
-      // 🪟 Windows — desktop_screenshot
+      // 🪟 Windows — using desktop_screenshot
       // -------------------------------
       else if (defaultTargetPlatform == TargetPlatform.windows) {
         final controller = DesktopScreenshot();
@@ -135,11 +152,12 @@ class ScreenshotSenderService {
         return;
       }
 
-      if (bytes.isEmpty) {
+      if (bytes == null || bytes.isEmpty) {
         logger.warn('Screenshot bytes are empty.');
         return;
       }
 
+      // Prepare upload
       final agentId = await _secureStorage.readAgentId() ?? 'unknown_user';
       final agentToken = await _secureStorage.readAccessToken() ?? 'unknown';
       const channel = 'screenshot';
@@ -151,7 +169,7 @@ class ScreenshotSenderService {
           'channel': channel,
           'access_token': agentToken,
           'thumbnail': 'true',
-          'name': filename
+          'name': filename,
         },
       );
 
@@ -162,18 +180,14 @@ class ScreenshotSenderService {
       );
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        logger.info('Screenshot uploaded: $filename');
+        logger.info('Screenshot uploaded successfully: $filename');
       } else {
         logger.error(
           'Screenshot upload failed: ${response.statusCode} — ${response.body}',
         );
-        throw Exception(
-          'Upload failed: ${response.statusCode} — ${response.body}',
-        );
       }
     } catch (e, stack) {
       logger.error('Screenshot error: $e\n$stack');
-      throw Exception('Screenshot error: $e\n$stack');
     }
   }
 }

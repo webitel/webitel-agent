@@ -16,6 +16,7 @@ import 'package:webitel_agent_flutter/storage.dart';
 import 'package:webitel_agent_flutter/tray.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 import 'package:webitel_agent_flutter/ws/ws_config.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'config/config.dart';
 import 'config/model/config.dart';
@@ -32,10 +33,61 @@ StreamRecorder? screenStream;
 
 RecorderLifecycleHandler? _recorderLifecycle;
 
+ScreenshotSenderService? screenshotService;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  windowManager.addListener(MyWindowListener());
   await _startAppFlow();
+}
+
+class MyWindowListener extends WindowListener {
+  @override
+  void onWindowClose() async {
+    // Stop tray service
+    TrayService.instance.dispose();
+
+    await _stopAllRecorders();
+    screenshotService?.stop();
+  }
+}
+
+Future<void> _stopAllRecorders() async {
+  logger.info('[App] Stopping all recorders before exit');
+
+  // Stop call recorder/stream
+  callStream?.stop();
+  callStream = null;
+
+  if (callRecorder != null) {
+    try {
+      await callRecorder!.stopRecording();
+      final success = await callRecorder!.uploadVideoWithRetry();
+      if (!success) logger.error('Call video upload failed on exit');
+    } catch (e) {
+      logger.error('Error stopping call recorder on exit: $e');
+    } finally {
+      await LocalVideoRecorder.cleanupOldVideos();
+      callRecorder = null;
+    }
+  }
+
+  // Stop screen recorder/stream
+  screenStream?.stop();
+  screenStream = null;
+
+  if (screenRecorder != null) {
+    try {
+      await screenRecorder!.stopRecording();
+      final success = await screenRecorder!.uploadVideoWithRetry();
+      if (!success) logger.error('Screen video upload failed on exit');
+    } catch (e) {
+      logger.error('Error stopping screen recorder on exit: $e');
+    } finally {
+      await LocalVideoRecorder.cleanupOldVideos();
+      screenRecorder = null;
+    }
+  }
 }
 
 // FIXME AGENT STATUS DOES NOT SYNC WITH SOCKET EVENT
@@ -451,9 +503,9 @@ Future<void> initialize(String token) async {
   );
 
   if (AppConfig.instance.screenshotEnabled) {
-    final screenshotService = ScreenshotSenderService(
+    screenshotService = ScreenshotSenderService(
       baseUrl: AppConfig.instance.baseUrl,
     );
-    screenshotService.start();
+    screenshotService?.start();
   }
 }
