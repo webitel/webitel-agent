@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_agent_flutter/config/config.dart';
 import 'package:webitel_agent_flutter/logger.dart';
@@ -20,7 +22,8 @@ Future<MediaStream?> captureDesktopScreen() async {
 
     final Map<String, dynamic> constraints = {
       'video': {
-        'deviceId': sources.first.id,
+        !Platform.isWindows ? 'displaySurface' : 'monitor': '',
+        Platform.isWindows ? 'deviceId' : sources.first.id: '',
         'mandatory': {
           'maxWidth': width + 10,
           'minWidth': width - 10,
