@@ -40,7 +40,7 @@ class LocalVideoRecorder {
   });
 
   Future<Directory> _getVideoDirectory() async {
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await getTemporaryDirectory();
     final recordingsDir = Directory('${dir.path}/recordings');
     if (!await recordingsDir.exists()) {
       await recordingsDir.create(recursive: true);
