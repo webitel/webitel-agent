@@ -229,9 +229,7 @@ class WebitelSocket {
 
     switch (callEvent) {
       case 'ringing':
-        if (callId != null
-        //  && recordScreen
-        ) {
+        if (callId != null && recordScreen) {
           _onCallRinging?.call(parentId ?? callId);
           _lastCallId = callId;
           _activeCalls.add({'callId': callId, 'attempt_id': attemptId});
