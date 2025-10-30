@@ -60,6 +60,9 @@ Future<void> stopAllRecorders() async {
   if (callRecorder != null) {
     try {
       await callRecorder!.stopRecording();
+
+      await Future.delayed(const Duration(seconds: 2));
+
       final success = await callRecorder!.uploadVideoWithRetry();
       if (!success) logger.error('Call video upload failed on exit');
     } catch (e) {
@@ -70,20 +73,22 @@ Future<void> stopAllRecorders() async {
     }
   }
 
-  // Stop screen recorder/stream
   screenStream?.stop();
   screenStream = null;
 
   if (screenRecorder != null) {
     try {
       await screenRecorder!.stopRecording();
+
+      await Future.delayed(const Duration(seconds: 2));
+
       final success = await screenRecorder!.uploadVideoWithRetry();
       if (!success) logger.error('Screen video upload failed on exit');
     } catch (e) {
       logger.error('Error stopping screen recorder on exit: $e');
     } finally {
       await LocalVideoRecorder.cleanupOldVideos();
-      screenRecorder = null;
+      callRecorder = null;
     }
   }
 }

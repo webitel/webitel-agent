@@ -34,6 +34,9 @@ class LocalVideoRecorder {
 
   DateTime? _recordingStartTime;
 
+  bool _isUploading = false;
+  bool _uploadCompleted = false;
+
   LocalVideoRecorder({
     required this.callId,
     required this.agentToken,
@@ -322,10 +325,17 @@ class LocalVideoRecorder {
   }
 
   Future<bool> uploadVideoWithRetry() async {
-    if (_videoFile == null) {
+    if (_isUploading || _uploadCompleted) {
+      _logger.info('Upload already in progress or completed, skipping');
+      return _uploadCompleted;
+    }
+
+    if (_videoFile == null || !await _videoFile!.exists()) {
       _logger.warn('No video file to upload, skipping retries');
       return false;
     }
+
+    _isUploading = true;
 
     final startTimeSec =
         _recordingStartTime != null
@@ -334,13 +344,18 @@ class LocalVideoRecorder {
 
     final endTimeSec = DateTime.now().millisecondsSinceEpoch;
 
+    bool success = false;
+
     for (int attempt = 1; attempt <= maxRetries; attempt++) {
       _logger.info('Upload attempt $attempt of $maxRetries');
-      final success = await uploadVideo(
+      success = await uploadVideo(
         startTimeSec: startTimeSec,
         endTimeSec: endTimeSec,
       );
-      if (success) return true;
+      if (success) {
+        _uploadCompleted = true;
+        break;
+      }
 
       if (attempt < maxRetries) {
         _logger.warn(
@@ -350,8 +365,12 @@ class LocalVideoRecorder {
       }
     }
 
-    _logger.error('Failed to upload video after $maxRetries attempts');
-    return false;
+    if (!success) {
+      _logger.error('Failed to upload video after $maxRetries attempts');
+    }
+
+    _isUploading = false;
+    return success;
   }
 
   Future<bool> uploadVideo({int? startTimeSec, int? endTimeSec}) async {

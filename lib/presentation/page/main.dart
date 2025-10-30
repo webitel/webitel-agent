@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:webitel_agent_flutter/logger.dart';
@@ -23,6 +25,7 @@ class _MainPageState extends State<MainPage> {
   @override
   void initState() {
     _listener = AppLifecycleListener(
+      onExitRequested: () => _handleAppExit(),
       onDetach: _handleAppExit,
       onPause: _handleAppExit,
       onResume: () => _connectSocket(),
@@ -37,15 +40,21 @@ class _MainPageState extends State<MainPage> {
     super.dispose();
   }
 
-  Future<void> _handleAppExit() async {
-    logger.info(
-      '[MainPage] App paused/detached — stopping recorders and socket...',
-    );
+  Future<AppExitResponse> _handleAppExit() async {
+    logger.info('[MainPage] App exit requested — stopping recorders...');
+
     try {
       await stopAllRecorders();
+
       await _socket?.disconnect();
+
+      logger.info('[MainPage] Cleanup complete, allowing exit');
+
+      return AppExitResponse.exit;
     } catch (e, st) {
       logger.error('[MainPage] Error during app exit cleanup: $e', st);
+
+      return AppExitResponse.exit;
     }
   }
 
