@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 import 'package:webitel_agent_flutter/logger.dart';
+import 'package:webitel_agent_flutter/storage.dart';
 
 Future<({RTCSessionDescription answer, String streamId})> sendSDPToServer({
   required String url,
@@ -10,11 +11,26 @@ Future<({RTCSessionDescription answer, String streamId})> sendSDPToServer({
   required RTCSessionDescription offer,
   required String id,
 }) async {
+  final agentId = await SecureStorageService().readAgentId() ?? 'unknown_user';
+  final now = DateTime.now();
+
+  final date =
+      '${now.year.toString().padLeft(4, '0')}-'
+      '${now.month.toString().padLeft(2, '0')}-'
+      '${now.day.toString().padLeft(2, '0')}';
+  final time =
+      '${now.hour.toString().padLeft(2, '0')}-'
+      '${now.minute.toString().padLeft(2, '0')}-'
+      '${now.second.toString().padLeft(2, '0')}';
+
+  // Example: recording_123_2024-06-15_14-30-45.mp4
+  final fileName = 'recording_ss_${agentId}_${date}_$time.mp4';
+
   final payload = {
     'type': offer.type,
     'sdp_offer': offer.sdp,
     'uuid': id,
-    'name': DateTime.now().toIso8601String(),
+    'name': fileName,
   };
 
   try {
