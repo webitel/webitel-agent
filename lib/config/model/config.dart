@@ -5,9 +5,6 @@ class AppConfigModel {
   // --- Auth ---
   final String loginUrl;
 
-  // --- Media ---
-  final bool screenshotEnabled;
-
   // --- WebSocket connection ---
   final String webitelWsUrl;
 
@@ -32,7 +29,6 @@ class AppConfigModel {
   AppConfigModel({
     required this.baseUrl,
     required this.loginUrl,
-    required this.screenshotEnabled,
     required this.webitelWsUrl,
     required this.videoWidth,
     required this.videoHeight,
@@ -78,7 +74,6 @@ class AppConfigModel {
       return '$wsBase${path.startsWith('/') ? path : '/$path'}';
     }
 
-    final media = json['media'] ?? {};
     final logger = json['logger'] ?? {};
     final webrtc = json['webrtc'] ?? {};
     final video = json['video'] ?? {};
@@ -99,7 +94,6 @@ class AppConfigModel {
     return AppConfigModel(
       baseUrl: baseUrl,
       loginUrl: combineUrl(_loginPath),
-      screenshotEnabled: parseBool(media['screenshotEnabled']),
       webitelWsUrl: combineWsUrl(_websocketPath),
       videoWidth: parseInt(video['width'], 1280),
       videoHeight: parseInt(video['height'], 720),

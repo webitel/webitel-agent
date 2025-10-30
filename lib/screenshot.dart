@@ -7,160 +7,240 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:screen_capturer/screen_capturer.dart';
 import 'package:webitel_agent_flutter/storage.dart';
-import 'config/config.dart';
 import 'logger.dart';
 
 class ScreenshotSenderService {
   final String baseUrl;
+
+  // Runs every 3 minutes to fetch screen_control + interval
+  Timer? _checkerTimer;
+
+  // Timer that triggers actual screenshot uploads with configured interval
   Timer? _screenshotTimer;
-  Timer? _intervalFetcherTimer;
-  Duration _interval = const Duration(minutes: 30); // Default interval
-  bool _isRunning = false;
+
+  // Current values
+  bool _serviceStarted = false;
+  bool _screenControlEnabled = false; // from agents endpoint
+  Duration _screenshotInterval = const Duration(minutes: 30); // default
 
   final _secureStorage = SecureStorageService();
 
   ScreenshotSenderService({required this.baseUrl});
 
+  /// Start the background checker (every 3 minutes).
+  /// This does NOT necessarily start screenshots — that depends on screen_control.
   void start() {
-    if (_isRunning) return;
-    _isRunning = true;
-    _startIntervalFetcher(); // Start periodic interval check
-  }
+    if (_serviceStarted) return;
+    _serviceStarted = true;
 
-  void stop() {
-    _screenshotTimer?.cancel();
-    _intervalFetcherTimer?.cancel();
-    _isRunning = false;
-  }
-
-  /// Fetches the screenshot interval every 10 seconds
-  /// and restarts the screenshot timer if the interval changes.
-  void _startIntervalFetcher() {
-    _fetchAndApplyInterval(); // Run immediately
-    _intervalFetcherTimer = Timer.periodic(
-      const Duration(seconds: 10),
-      (_) => _fetchAndApplyInterval(),
+    // Run immediately, then every 3 minutes
+    _fetchControlsAndInterval();
+    _checkerTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _fetchControlsAndInterval(),
     );
   }
 
-  Future<void> _fetchAndApplyInterval() async {
+  /// Stop everything
+  void stop() {
+    _checkerTimer?.cancel();
+    _screenshotTimer?.cancel();
+    _serviceStarted = false;
+    _screenControlEnabled = false;
+  }
+
+  Future<void> _fetchControlsAndInterval() async {
     try {
       final token = await _secureStorage.readAccessToken();
-      if (token == null) {
-        logger.warn('No access token available for interval fetch.');
+      final agentId = await _secureStorage.readAgentId();
+
+      if (token == null || agentId == null) {
+        logger.warn(
+          '[Screenshot] Missing token or agentId for control/interval fetch.',
+        );
         return;
       }
 
-      final uri = Uri.parse(
-        '${AppConfig.instance.baseUrl}/api/settings?name=screenshot_interval',
+      // Fetch screen_control
+      // Fetch screen_control
+      final agentsUri = Uri.parse(
+        '$baseUrl/api/call_center/agents?page=1&size=1&fields=screen_control&id=$agentId',
       );
 
-      final res = await http.get(uri, headers: {'X-Webitel-Access': token});
+      final agentsResp = await http.get(
+        agentsUri,
+        headers: {'X-Webitel-Access': token},
+      );
+      if (agentsResp.statusCode == 200) {
+        final js = jsonDecode(agentsResp.body);
+        final items = js['items'];
+        if (items is List && items.isNotEmpty) {
+          final dynamic scValue = items.first['screen_control'];
+          final bool enabled = scValue != null && scValue == true;
 
-      if (res.statusCode == 200) {
-        final bodyJson = jsonDecode(res.body);
-        final items = bodyJson['items'];
+          if (enabled != _screenControlEnabled) {
+            _screenControlEnabled = enabled;
+            if (_screenControlEnabled) {
+              logger.info(
+                '[Screenshot] screen_control enabled → starting screenshots',
+              );
+              _startScreenshotsIfNeeded();
+            } else {
+              logger.info(
+                '[Screenshot] screen_control disabled/missing → stopping screenshots',
+              );
+              _stopScreenshots();
+            }
+          }
+        } else {
+          logger.warn('[Screenshot] agents response missing items or empty.');
+        }
+      } else {
+        logger.warn(
+          '[Screenshot] agents fetch failed: ${agentsResp.statusCode} ${agentsResp.body}',
+        );
+      }
+
+      // Fetch screenshot_interval
+      final settingsUri = Uri.parse(
+        '$baseUrl/api/settings?name=screenshot_interval',
+      );
+
+      final settingsResp = await http.get(
+        settingsUri,
+        headers: {'X-Webitel-Access': token},
+      );
+      if (settingsResp.statusCode == 200) {
+        final js = jsonDecode(settingsResp.body);
+        final items = js['items'];
         if (items is List && items.isNotEmpty) {
           final value = items.first['value'];
           final minutes = int.tryParse(value.toString());
           if (minutes != null && minutes > 0) {
             final newInterval = Duration(minutes: minutes);
-
-            // If the interval changed, restart the timer
-            if (newInterval != _interval) {
-              _interval = newInterval;
-              logger.info('Updated screenshot interval: $_interval');
-              _restartScreenshotTimer();
+            if (newInterval != _screenshotInterval) {
+              logger.info(
+                '[Screenshot] interval updated from $_screenshotInterval to $newInterval',
+              );
+              _screenshotInterval = newInterval;
+              // if screenshots are running, restart with new interval
+              if (_screenControlEnabled) {
+                _restartScreenshotTimer();
+              }
             }
           } else {
-            logger.warn('Invalid interval format: $value');
+            logger.warn(
+              '[Screenshot] invalid screenshot_interval value: $value',
+            );
           }
+        } else {
+          logger.warn('[Screenshot] settings response missing items or empty.');
         }
       } else {
-        logger.warn('Interval fetch failed: ${res.statusCode} — ${res.body}');
+        logger.warn(
+          '[Screenshot] settings fetch failed: ${settingsResp.statusCode} ${settingsResp.body}',
+        );
       }
-    } catch (e, stack) {
-      logger.error('Failed to fetch interval: $e\n$stack');
+    } catch (e, st) {
+      logger.error('[Screenshot] failed to fetch control/interval: $e\n$st');
     }
+  }
+
+  void _startScreenshotsIfNeeded() {
+    if (!_screenControlEnabled) return;
+    // If timer already running with correct interval — keep it
+    if (_screenshotTimer != null && _screenshotTimer!.isActive) {
+      // but if its period differs from _screenshotInterval, restart
+      // Unfortunately Timer.periodic doesn't expose period — so we always restart to be safe
+      _restartScreenshotTimer();
+      return;
+    }
+    _restartScreenshotTimer();
   }
 
   void _restartScreenshotTimer() {
     _screenshotTimer?.cancel();
-    _screenshotTimer = Timer.periodic(_interval, (_) => screenshot());
-    screenshot(); // Trigger first capture immediately
+    _screenshotTimer = Timer.periodic(_screenshotInterval, (_) => screenshot());
+    // take first shot immediately
+    screenshot();
+  }
+
+  void _stopScreenshots() {
+    _screenshotTimer?.cancel();
+    _screenshotTimer = null;
   }
 
   /// Captures a screenshot depending on the platform and uploads it to the server.
   Future<void> screenshot() async {
     try {
       Uint8List? bytes;
-      String filename =
-          'screenshot-${DateTime.now().millisecondsSinceEpoch}.png';
+      final agentToken = await _secureStorage.readAccessToken() ?? 'unknown';
+      const channel = 'screenshot';
+      final agentId = await _secureStorage.readAgentId() ?? 'unknown_user';
 
-      // -------------------------------
-      // 🖥️ macOS — using screen_capturer
-      // -------------------------------
+      final now = DateTime.now();
+      final date =
+          '${now.year.toString().padLeft(4, '0')}-'
+          '${now.month.toString().padLeft(2, '0')}-'
+          '${now.day.toString().padLeft(2, '0')}';
+      final time =
+          '${now.hour.toString().padLeft(2, '0')}-'
+          '${now.minute.toString().padLeft(2, '0')}-'
+          '${now.second.toString().padLeft(2, '0')}';
+
+      final filename = 'scr_ss_${agentId}_${date}_$time.png';
+
+      // macOS
       if (defaultTargetPlatform == TargetPlatform.macOS) {
         final allowed = await ScreenCapturer.instance.isAccessAllowed();
         if (!allowed) {
           await ScreenCapturer.instance.requestAccess(onlyOpenPrefPane: true);
-          logger.warn('macOS screen capture permission not granted.');
+          logger.warn('[Screenshot] macOS permission not granted.');
           return;
         }
 
-        final directory = await getTemporaryDirectory();
-        final safeTimestamp = DateTime.now().toIso8601String().replaceAll(
-          ':',
-          '-',
-        );
-        final fullPath = '${directory.path}/$safeTimestamp.png';
+        final dir = await getTemporaryDirectory();
+        final path = '${dir.path}/$filename';
 
         final capture = await ScreenCapturer.instance.capture(
           mode: CaptureMode.screen,
           copyToClipboard: false,
           silent: true,
-          imagePath: fullPath,
+          imagePath: path,
         );
 
         if (capture == null) {
-          logger.warn('Screenshot capture returned null.');
+          logger.warn('[Screenshot] macOS capture returned null.');
           return;
         }
 
-        final file = File(fullPath);
+        final file = File(path);
         if (!await file.exists()) {
-          logger.warn('Screenshot file not found at $fullPath');
+          logger.warn('[Screenshot] file not found: $path');
           return;
         }
-
         bytes = await file.readAsBytes();
-        filename = '$safeTimestamp.png';
       }
-      // -------------------------------
-      // 🪟 Windows — using desktop_screenshot
-      // -------------------------------
+      // Windows
       else if (defaultTargetPlatform == TargetPlatform.windows) {
         final controller = DesktopScreenshot();
         final image = await controller.getScreenshot();
         if (image == null || image.isEmpty) {
-          logger.warn('Windows screenshot failed (null or empty)');
+          logger.warn('[Screenshot] Windows capture failed.');
           return;
         }
         bytes = image;
       } else {
-        logger.warn('Unsupported platform: $defaultTargetPlatform');
+        logger.warn(
+          '[Screenshot] Unsupported platform: $defaultTargetPlatform',
+        );
         return;
       }
 
-      if (bytes == null || bytes.isEmpty) {
-        logger.warn('Screenshot bytes are empty.');
+      if (bytes.isEmpty) {
+        logger.warn('[Screenshot] bytes empty, skipping upload.');
         return;
       }
-
-      // Prepare upload
-      final agentId = await _secureStorage.readAgentId() ?? 'unknown_user';
-      final agentToken = await _secureStorage.readAccessToken() ?? 'unknown';
-      const channel = 'screenshot';
 
       final uri = Uri.parse(
         '$baseUrl/api/storage/file/$agentId/upload',
@@ -180,14 +260,14 @@ class ScreenshotSenderService {
       );
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        logger.info('Screenshot uploaded successfully: $filename');
+        logger.info('[Screenshot] uploaded: $filename');
       } else {
         logger.error(
-          'Screenshot upload failed: ${response.statusCode} — ${response.body}',
+          '[Screenshot] upload failed: ${response.statusCode} ${response.body}',
         );
       }
-    } catch (e, stack) {
-      logger.error('Screenshot error: $e\n$stack');
+    } catch (e, st) {
+      logger.error('[Screenshot] error: $e\n$st');
     }
   }
 }

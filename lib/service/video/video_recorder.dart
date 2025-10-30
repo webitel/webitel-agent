@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:webitel_agent_flutter/storage.dart';
 import 'package:win32/win32.dart';
 
 import '../../logger.dart' show logger;
@@ -88,11 +89,27 @@ class LocalVideoRecorder {
       throw ArgumentError('Invalid recordingId');
     }
 
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
     String? ffmpegCommand;
 
     final directory = await _getVideoDirectory();
-    final filePath = '${directory.path}/${recordingId}_$timestamp.mp4';
+
+    final agentId =
+        await SecureStorageService().readAgentId() ?? 'unknown_user';
+
+    final now = DateTime.now();
+    final date =
+        '${now.year.toString().padLeft(4, '0')}-'
+        '${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
+    final time =
+        '${now.hour.toString().padLeft(2, '0')}-'
+        '${now.minute.toString().padLeft(2, '0')}-'
+        '${now.second.toString().padLeft(2, '0')}';
+
+    // Example filename: recording_ss_10_2025-10-29_20-58-45.mp4
+    final fileName = 'recording_ss_${agentId}_${date}_$time.mp4';
+    final filePath = '${directory.path}/$fileName';
+
     _recordingFilePath = filePath;
     _videoFile = File(filePath);
 

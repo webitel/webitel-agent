@@ -229,6 +229,7 @@ class WebitelSocket {
 
     switch (callEvent) {
       case 'ringing':
+      case 'update':
         if (callId != null && recordScreen) {
           _onCallRinging?.call(parentId ?? callId);
           _lastCallId = callId;
@@ -358,6 +359,9 @@ class WebitelSocket {
           break;
 
         case NotificationAction.screenRecordStart:
+          if (_screenRecordingActive && _activeCalls.isNotEmpty) {
+            throw Exception('Screen recording already active from call');
+          }
           onScreenRecordStart?.call(body);
           break;
 
@@ -373,8 +377,9 @@ class WebitelSocket {
       }
     } catch (e) {
       ackError = e.toString();
-      logger.error('[WebitelSocket] Error logging notification', e);
+      logger.error('[WebitelSocket] Error handling notification', e);
     }
+
     if (ackId != null) {
       await ack(ackId, ackError);
     }

@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
-import 'package:webitel_agent_flutter/defaults/version.dart';
 import 'package:webitel_agent_flutter/logger.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 
 import '../../gen/assets.gen.dart';
 import '../../service/video/recorder_lifecycle.dart';
 import '../theme/text_style.dart';
+import '../../../main.dart';
 
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
@@ -16,7 +16,6 @@ class MainPage extends StatefulWidget {
 }
 
 class _MainPageState extends State<MainPage> {
-  RecorderLifecycleHandler? _recorderLifecycle;
   WebitelSocket? _socket;
 
   late final AppLifecycleListener _listener;
@@ -24,8 +23,8 @@ class _MainPageState extends State<MainPage> {
   @override
   void initState() {
     _listener = AppLifecycleListener(
-      onDetach: () => _socket?.disconnect(),
-      onPause: () => _socket?.disconnect(),
+      onDetach: _handleAppExit,
+      onPause: _handleAppExit,
       onResume: () => _connectSocket(),
       onRestart: () => _connectSocket(),
     );
@@ -34,9 +33,20 @@ class _MainPageState extends State<MainPage> {
 
   @override
   void dispose() {
-    _recorderLifecycle?.dispose();
     _listener.dispose();
     super.dispose();
+  }
+
+  Future<void> _handleAppExit() async {
+    logger.info(
+      '[MainPage] App paused/detached — stopping recorders and socket...',
+    );
+    try {
+      await stopAllRecorders();
+      await _socket?.disconnect();
+    } catch (e, st) {
+      logger.error('[MainPage] Error during app exit cleanup: $e', st);
+    }
   }
 
   Future<void> _connectSocket() async {

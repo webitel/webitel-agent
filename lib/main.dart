@@ -8,7 +8,6 @@ import 'package:webitel_agent_flutter/login.dart';
 import 'package:webitel_agent_flutter/presentation/page/main.dart';
 import 'package:webitel_agent_flutter/presentation/page/missing_config.dart';
 import 'package:webitel_agent_flutter/screenshot.dart';
-import 'package:webitel_agent_flutter/service/video/recorder_lifecycle.dart';
 import 'package:webitel_agent_flutter/service/video/video_recorder.dart';
 import 'package:webitel_agent_flutter/service/webrtc/core/config.dart';
 import 'package:webitel_agent_flutter/service/webrtc/session/stream_recorder.dart';
@@ -31,8 +30,6 @@ StreamRecorder? callStream;
 LocalVideoRecorder? screenRecorder;
 StreamRecorder? screenStream;
 
-RecorderLifecycleHandler? _recorderLifecycle;
-
 ScreenshotSenderService? screenshotService;
 
 void main() async {
@@ -47,12 +44,12 @@ class MyWindowListener extends WindowListener {
     // Stop tray service
     TrayService.instance.dispose();
 
-    await _stopAllRecorders();
+    await stopAllRecorders();
     screenshotService?.stop();
   }
 }
 
-Future<void> _stopAllRecorders() async {
+Future<void> stopAllRecorders() async {
   logger.info('[App] Stopping all recorders before exit');
 
   // Stop call recorder/stream
@@ -261,16 +258,15 @@ Future<void> appStartupFlow() async {
   }
 
   await initialize(token ?? '');
-
-  // _recorderLifecycle = RecorderLifecycleHandler(
-  //   getRecorder: () => localRecorder,
-  // );
-  // _recorderLifecycle!.init();
 }
 
 /// Initializes WebSocket, tray, services, and WebRTC stream handlers
 Future<void> initialize(String token) async {
   final storage = SecureStorageService();
+  screenshotService = ScreenshotSenderService(
+    baseUrl: AppConfig.instance.baseUrl,
+  );
+  screenshotService?.start();
 
   final socket = WebitelSocket(
     config: WebitelSocketConfig(
@@ -501,11 +497,4 @@ Future<void> initialize(String token) async {
       }
     },
   );
-
-  if (AppConfig.instance.screenshotEnabled) {
-    screenshotService = ScreenshotSenderService(
-      baseUrl: AppConfig.instance.baseUrl,
-    );
-    screenshotService?.start();
-  }
 }
