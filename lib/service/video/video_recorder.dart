@@ -30,8 +30,9 @@ class LocalVideoRecorder {
   static const Duration retryDelay = Duration(seconds: 2);
 
   Process? _windowsProcess;
-
   String? _recordingFilePath;
+
+  DateTime? _recordingStartTime;
 
   LocalVideoRecorder({
     required this.callId,
@@ -82,6 +83,7 @@ class LocalVideoRecorder {
 
   Future<void> startRecording({required String recordingId}) async {
     if (_isRecording) return;
+    _recordingStartTime = DateTime.now();
 
     // Validate recordingId as UUID — reject if invalid
     if (!_isValidUuid(recordingId)) {
@@ -325,9 +327,19 @@ class LocalVideoRecorder {
       return false;
     }
 
+    final startTimeSec =
+        _recordingStartTime != null
+            ? _recordingStartTime!.millisecondsSinceEpoch
+            : DateTime.now().millisecondsSinceEpoch;
+
+    final endTimeSec = DateTime.now().millisecondsSinceEpoch;
+
     for (int attempt = 1; attempt <= maxRetries; attempt++) {
       _logger.info('Upload attempt $attempt of $maxRetries');
-      final success = await uploadVideo();
+      final success = await uploadVideo(
+        startTimeSec: startTimeSec,
+        endTimeSec: endTimeSec,
+      );
       if (success) return true;
 
       if (attempt < maxRetries) {
@@ -342,20 +354,25 @@ class LocalVideoRecorder {
     return false;
   }
 
-  Future<bool> uploadVideo() async {
+  Future<bool> uploadVideo({int? startTimeSec, int? endTimeSec}) async {
     if (_videoFile == null || !await _videoFile!.exists()) {
       _logger.error('No video file to upload');
       return false;
     }
 
     try {
-      final uri = Uri.parse('$baseUrl/api/storage/file/$callId/upload').replace(
-        queryParameters: {
-          'channel': channel,
-          'access_token': agentToken,
-          'thumbnail': 'true',
-        },
-      );
+      final queryParameters = {
+        'channel': channel,
+        'access_token': agentToken,
+        'thumbnail': 'true',
+      };
+
+      if (startTimeSec != null) queryParameters['start_time'] = '$startTimeSec';
+      if (endTimeSec != null) queryParameters['end_time'] = '$endTimeSec';
+
+      final uri = Uri.parse(
+        '$baseUrl/api/storage/file/$callId/upload',
+      ).replace(queryParameters: queryParameters);
 
       _logger.info('Uploading video to: $uri');
 
