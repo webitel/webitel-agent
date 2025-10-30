@@ -8,7 +8,7 @@ Cross-platform desktop application (Windows/macOS/Linux) for Webitel call center
 
 | Feature                      | Description                                                       |
 |:-----------------------------|:------------------------------------------------------------------|
-| **🖼️ Periodic Screenshots** | Automatic screen captures (configurable via `config.json`)        |
+| **🖼️ Periodic Screenshots**  | Automatic screen captures                                         |
 | **🎥 Screen Recording**      | Starts recording based on Webitel socket events                   |
 | **📡 Live Screen Streaming** | Real-time agent screen sharing via WebRTC for supervisors         |
 | **🧠 Configurable Behavior** | Controlled through the `config.json` file                         |
@@ -42,9 +42,6 @@ Use the **"Upload configuration"** option in the tray menu to manually load your
   "server": {
     "baseUrl": "https://hostname"
   },
-  "media": {
-    "screenshotEnabled": true
-  },
   "logger": {
     "info": true,
     "debug": true,
@@ -71,7 +68,6 @@ Use the **"Upload configuration"** option in the tray menu to manually load your
 | Key                           | Description                                           |
 |:------------------------------|:------------------------------------------------------|
 | **`server.baseUrl`**          | Base URL of the Webitel server                        |
-| **`media.screenshotEnabled`** | Enable/disable periodic screenshots (`true`/`false`)  |
 | **`logger.info`**             | Enable info-level logging                             |
 | **`logger.debug`**            | Enable debug-level logging                            |
 | **`logger.error`**            | Enable error-level logging                            |
