@@ -95,11 +95,11 @@ class WebitelSocket {
   void _startPeriodicStateCheck() {
     _stateCheckTimer?.cancel();
     _stateCheckTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      logger.debug(
-        '[PeriodicCheck] activeCalls=${_activeCalls.length}, '
-        'postProcessing=${_postProcessing.length}, '
-        'isRecording=$_screenRecordingActive',
-      );
+      // logger.debug(
+      //   '[PeriodicCheck] activeCalls=${_activeCalls.length}, '
+      //   'postProcessing=${_postProcessing.length}, '
+      //   'isRecording=$_screenRecordingActive',
+      // );
       _updateScreenRecordingState();
     });
   }
