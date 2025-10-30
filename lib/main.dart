@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:screen_capturer/screen_capturer.dart';
+import 'package:uuid/uuid.dart';
 import 'package:webitel_agent_flutter/logger.dart';
 import 'package:webitel_agent_flutter/login.dart';
 import 'package:webitel_agent_flutter/presentation/page/main.dart';
@@ -416,13 +417,13 @@ Future<void> initialize(String token) async {
   );
 
   final Map<String, Timer> screenRecordTimers = {};
+  final uuid = Uuid();
 
   socket.onScreenRecordEvent(
     onStart: (body) async {
       screenStream?.stop();
       screenRecorder?.stopRecording();
-      final recordingId =
-          body['root_id'] ?? '00000000-0000-0000-0000-000000000000';
+      final recordingId = body['root_id'] ?? uuid.v4();
 
       final webrtcConfig = WebRTCConfig.fromEnv();
       final appConfig = AppConfig.instance;
