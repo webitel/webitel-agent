@@ -86,6 +86,7 @@ class LocalVideoRecorder {
 
   Future<void> startRecording({required String recordingId}) async {
     if (_isRecording) return;
+    _isRecording = true;
     _recordingStartTime = DateTime.now();
 
     // Validate recordingId as UUID — reject if invalid
@@ -200,8 +201,6 @@ class LocalVideoRecorder {
     } else {
       throw UnsupportedError('Recording not supported on this platform');
     }
-
-    _isRecording = true;
 
     logger.info('Executing FFmpeg command:\n$ffmpegCommand');
 

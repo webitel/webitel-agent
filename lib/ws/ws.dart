@@ -55,11 +55,11 @@ class WebitelSocket {
   ScreenStreamer? _screenCapturer;
   late final ScreenshotSenderService screenshotService;
 
-  final List<Map<String, dynamic>> _activeCalls = [];
+  final List<Map<String, dynamic>> activeCalls = [];
   final List<Map<String, dynamic>> _postProcessing = [];
 
   bool get _shouldRecordScreen =>
-      _activeCalls.isNotEmpty || _postProcessing.isNotEmpty;
+      activeCalls.isNotEmpty || _postProcessing.isNotEmpty;
 
   WebitelSocket({required this.config}) {
     _token = config.token;
@@ -241,9 +241,10 @@ class WebitelSocket {
       case 'ringing':
       case 'update':
         if (callId != null && recordScreen) {
+          _screenRecordingActive = true;
           _onCallRinging?.call(parentId ?? callId);
           _lastCallId = callId;
-          _activeCalls.add({'callId': callId, 'attempt_id': attemptId});
+          activeCalls.add({'callId': callId, 'attempt_id': attemptId});
           _updateScreenRecordingState();
         } else {
           logger.warn(
@@ -254,7 +255,7 @@ class WebitelSocket {
 
       case 'hangup':
         if (callId != null) {
-          _activeCalls.removeWhere((c) => c['callId'] == callId);
+          activeCalls.removeWhere((c) => c['callId'] == callId);
           _updateScreenRecordingState();
         } else {
           logger.warn(
@@ -269,7 +270,7 @@ class WebitelSocket {
   }
 
   void _updateScreenRecordingState() {
-    final shouldRecord = _activeCalls.isNotEmpty || _postProcessing.isNotEmpty;
+    final shouldRecord = activeCalls.isNotEmpty || _postProcessing.isNotEmpty;
 
     if (shouldRecord && !_screenRecordingActive) {
       _screenRecordingActive = true;
@@ -369,7 +370,7 @@ class WebitelSocket {
           break;
 
         case NotificationAction.screenRecordStart:
-          if (_screenRecordingActive && _activeCalls.isNotEmpty) {
+          if (_screenRecordingActive) {
             throw Exception('Screen recording already active from call');
           }
           onScreenRecordStart?.call(body);

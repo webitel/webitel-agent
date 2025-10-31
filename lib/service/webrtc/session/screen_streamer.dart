@@ -5,6 +5,7 @@ import 'package:webitel_agent_flutter/logger.dart';
 import 'package:webitel_agent_flutter/main.dart';
 import 'package:webitel_agent_flutter/service/video/video_recorder.dart';
 import 'package:webitel_agent_flutter/service/webrtc/core/capturer.dart';
+import 'package:webitel_agent_flutter/ws/ws.dart';
 
 typedef OnReceiverClosed = void Function();
 typedef OnAccept =
@@ -139,56 +140,57 @@ class ScreenStreamer {
         switch (state) {
           case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
           case RTCIceConnectionState.RTCIceConnectionStateFailed:
-            logger.warn(
-              '[ScreenStreamer] ICE state $state - stopping local recording',
-            );
+            logger.warn('[ScreenStreamer] ICE state $state');
 
-            // Stop local screen recorder
-            if (screenRecorder != null) {
-              try {
-                await screenRecorder!.stopRecording();
-                final success = await screenRecorder!.uploadVideoWithRetry();
-                if (!success)
-                  logger.error('Screen video upload failed on ICE $state');
-              } catch (e) {
-                logger.error(
-                  'Error stopping screen recorder on ICE $state: $e',
-                );
-              } finally {
-                await LocalVideoRecorder.cleanupOldVideos();
-                screenRecorder = null;
-              }
-            }
+            //FIXME
+            // // Stop local screen recorder
+            // if (screenRecorder != null && activeCalls.isNotEmpty ||
+            //     postProcessing.isNotEmpty) {
+            //   try {
+            //     await screenRecorder!.stopRecording();
+            //     final success = await screenRecorder!.uploadVideoWithRetry();
+            //     if (!success)
+            //       logger.error('Screen video upload failed on ICE $state');
+            //   } catch (e) {
+            //     logger.error(
+            //       'Error stopping screen recorder on ICE $state: $e',
+            //     );
+            //   } finally {
+            //     await LocalVideoRecorder.cleanupOldVideos();
+            //     screenRecorder = null;
+            //   }
+            // }
 
-            // Stop screen WebRTC stream
-            screenStream?.stop();
-            screenStream = null;
+            // // Stop screen WebRTC stream
+            // screenStream?.stop();
+            // screenStream = null;
 
-            // Stop local call recorder if any
-            if (callRecorder != null) {
-              try {
-                await callRecorder!.stopRecording();
-                final success = await callRecorder!.uploadVideoWithRetry();
-                if (!success)
-                  logger.error('Call video upload failed on ICE $state');
-              } catch (e) {
-                logger.error('Error stopping call recorder on ICE $state: $e');
-              } finally {
-                await LocalVideoRecorder.cleanupOldVideos();
-                callRecorder = null;
-              }
-            }
+            // // Stop local call recorder if any
+            // if (callRecorder != null && activeCalls.isNotEmpty ||
+            //     postProcessing.isNotEmpty) {
+            //   try {
+            //     await callRecorder!.stopRecording();
+            //     final success = await callRecorder!.uploadVideoWithRetry();
+            //     if (!success)
+            //       logger.error('Call video upload failed on ICE $state');
+            //   } catch (e) {
+            //     logger.error('Error stopping call recorder on ICE $state: $e');
+            //   } finally {
+            //     await LocalVideoRecorder.cleanupOldVideos();
+            //     callRecorder = null;
+            //   }
+            // }
 
-            // Stop call WebRTC stream
-            callStream?.stop();
-            callStream = null;
+            // // Stop call WebRTC stream
+            // callStream?.stop();
+            // callStream = null;
 
-            if (state ==
-                RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
-              await _pc?.restartIce();
-            } else {
-              close('ICE $state');
-            }
+            // if (state ==
+            //     RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+            //   await _pc?.restartIce();
+            // } else {
+            //   close('ICE $state');
+            // }
             break;
 
           case RTCIceConnectionState.RTCIceConnectionStateClosed:
