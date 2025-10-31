@@ -245,21 +245,19 @@ Future<void> appStartupFlow() async {
 
   String? token = await storage.readAccessToken();
 
-  if (token != null) {
-    if (token.isEmpty) {
-      await waitForNavigator();
+  if (token == null) {
+    await waitForNavigator();
 
-      final loggedIn = await performLoginFlow();
-      if (!loggedIn) {
-        logger.warn('Login cancelled. User stays logged out.');
-        return;
-      }
+    final loggedIn = await performLoginFlow();
+    if (!loggedIn) {
+      logger.warn('Login cancelled. User stays logged out.');
+      return;
+    }
 
-      token = await storage.readAccessToken();
-      if (token!.isEmpty) {
-        logger.error('Token missing after login flow!');
-        return;
-      }
+    token = await storage.readAccessToken();
+    if (token!.isEmpty) {
+      logger.error('Token missing after login flow!');
+      return;
     }
   }
 
