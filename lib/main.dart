@@ -285,12 +285,41 @@ Future<void> initialize(String token) async {
   await socket.connect();
 
   Future<bool> authenticateSocket() async {
+    final storage = SecureStorageService();
+
     try {
       await socket.authenticate();
       return true;
     } catch (e, stack) {
       logger.error('Socket authentication error: $e', stack);
-      return false;
+
+      logger.warn('Attempting re-login due to failed socket authentication...');
+
+      await storage.deleteAccessToken();
+      await waitForNavigator();
+
+      final success = await performLoginFlow();
+      if (!success) {
+        logger.error('Re-login failed or canceled after auth error.');
+        return false;
+      }
+
+      final newToken = await storage.readAccessToken();
+      if (newToken == null || newToken.isEmpty) {
+        logger.error('Token missing after re-login.');
+        return false;
+      }
+
+      socket.updateToken(newToken);
+
+      try {
+        await socket.authenticate();
+        logger.info('Re-authentication succeeded after token update.');
+        return true;
+      } catch (e, stack) {
+        logger.error('Re-authentication failed after re-login: $e', stack);
+        return false;
+      }
     }
   }
 
