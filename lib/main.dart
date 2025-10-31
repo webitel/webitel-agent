@@ -282,7 +282,28 @@ Future<void> initialize(String token) async {
     ),
   );
 
-  await socket.connect();
+  try {
+    await socket.connect();
+  } catch (e, stack) {
+    logger.error('WebSocket connection failed: $e', stack);
+
+    await storage.deleteAccessToken();
+    await waitForNavigator();
+    final success = await performLoginFlow();
+    if (!success) return;
+
+    final newToken = await storage.readAccessToken();
+    if (newToken == null || newToken.isEmpty) return;
+
+    socket.updateToken(newToken);
+
+    try {
+      await socket.connect();
+    } catch (e, stack) {
+      logger.error('Reconnection failed: $e', stack);
+      return;
+    }
+  }
 
   Future<bool> authenticateSocket() async {
     final storage = SecureStorageService();
