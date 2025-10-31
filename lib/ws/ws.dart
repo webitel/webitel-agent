@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:webitel_agent_flutter/service/agent_control.dart';
 import 'package:webitel_agent_flutter/service/webrtc/session/screen_streamer.dart';
 import 'package:webitel_agent_flutter/ws/ws_config.dart';
 
@@ -22,6 +23,7 @@ import 'ws_events.dart';
 enum AgentStatus { online, offline, pause, unknown }
 
 class WebitelSocket {
+  final AgentControlService agentControlService;
   final WebitelSocketConfig config;
   late String _token;
 
@@ -61,7 +63,7 @@ class WebitelSocket {
   bool get _shouldRecordScreen =>
       activeCalls.isNotEmpty || _postProcessing.isNotEmpty;
 
-  WebitelSocket({required this.config}) {
+  WebitelSocket({required this.config, required this.agentControlService}) {
     _token = config.token;
     screenshotService = ScreenshotSenderService(baseUrl: config.baseUrl);
   }
@@ -135,6 +137,17 @@ class WebitelSocket {
     if (replySeq != null && _pendingRequests.containsKey(replySeq)) {
       _handleReply(data, replySeq);
       return;
+    }
+
+    if (!agentControlService.screenControlEnabled) {
+      if (event == WebSocketEvent.call ||
+          event == WebSocketEvent.notification ||
+          event == WebSocketEvent.channel) {
+        logger.debug(
+          '[WebitelSocket] Agent control disabled → ignoring ${data['event']}',
+        );
+        return;
+      }
     }
 
     switch (event) {

@@ -9,6 +9,7 @@ import 'package:webitel_agent_flutter/login.dart';
 import 'package:webitel_agent_flutter/presentation/page/main.dart';
 import 'package:webitel_agent_flutter/presentation/page/missing_config.dart';
 import 'package:webitel_agent_flutter/screenshot.dart';
+import 'package:webitel_agent_flutter/service/agent_control.dart';
 import 'package:webitel_agent_flutter/service/video/video_recorder.dart';
 import 'package:webitel_agent_flutter/service/webrtc/core/config.dart';
 import 'package:webitel_agent_flutter/service/webrtc/session/stream_recorder.dart';
@@ -272,12 +273,18 @@ Future<void> initialize(String token) async {
   );
   screenshotService?.start();
 
+  final agentControlService = AgentControlService(
+    baseUrl: AppConfig.instance.baseUrl,
+  );
+  agentControlService.start();
+
   final socket = WebitelSocket(
     config: WebitelSocketConfig(
       url: AppConfig.instance.webitelWsUrl,
       baseUrl: AppConfig.instance.baseUrl,
       token: token,
     ),
+    agentControlService: agentControlService,
   );
 
   try {
