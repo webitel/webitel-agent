@@ -6,7 +6,9 @@ import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:webitel_agent_flutter/main.dart';
 import 'package:webitel_agent_flutter/service/webrtc/session/screen_streamer.dart';
+import 'package:webitel_agent_flutter/storage.dart';
 import 'package:webitel_agent_flutter/ws/ws_config.dart';
 
 import '../logger.dart';
@@ -81,15 +83,57 @@ class WebitelSocket {
 
   Future<void> connect() async {
     logger.info('WebitelSocket: Connecting to ${config.url}');
-    _channel = WebSocketChannel.connect(Uri.parse(config.url));
-    _wsSubscription = _channel.stream.listen(
-      _onMessage,
-      onError: _onError,
-      onDone: _onDone,
-    );
-    _isConnected = true;
-    _startConnectivityMonitoring();
-    _startPeriodicStateCheck();
+
+    try {
+      _channel = WebSocketChannel.connect(Uri.parse(config.url));
+
+      _wsSubscription = _channel.stream.listen(
+        _onMessage,
+        onError: (error, stack) async {
+          logger.error('WebSocket error on connect: $error', stack);
+          _isConnected = false;
+
+          if (error.toString().contains('CERTIFICATE_VERIFY_FAILED')) {
+            await _handleAuthError();
+          }
+        },
+        onDone: () {
+          logger.warn('WebSocket connection closed');
+          _isConnected = false;
+        },
+      );
+
+      _isConnected = true;
+
+      _startConnectivityMonitoring();
+      _startPeriodicStateCheck();
+    } catch (e, stack) {
+      logger.error('WebSocket initial connect error: $e', stack);
+
+      await _handleAuthError();
+    }
+  }
+
+  Future<void> _handleAuthError() async {
+    final storage = SecureStorageService();
+    await storage.deleteAccessToken();
+    await waitForNavigator();
+
+    final success = await performLoginFlow();
+    if (!success) {
+      logger.error('Re-login failed or canceled.');
+      return;
+    }
+
+    final newToken = await storage.readAccessToken();
+    if (newToken == null || newToken.isEmpty) {
+      logger.error('Token missing after re-login.');
+      return;
+    }
+
+    updateToken(newToken);
+
+    await connect();
   }
 
   void _startPeriodicStateCheck() {
