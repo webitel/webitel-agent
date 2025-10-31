@@ -84,7 +84,14 @@ class LoggerService {
 
   void error(String message, [dynamic error, StackTrace? stackTrace]) {
     _logger.e(message, error: error, stackTrace: stackTrace);
-    _logToFile('ERROR', '$message\n$error\n${stackTrace ?? ''}');
+
+    final errorText = error != null ? error.toString() : '';
+    final stackText = stackTrace != null ? stackTrace.toString() : '';
+
+    _logToFile(
+      'ERROR',
+      [message, errorText, stackText].where((s) => s.isNotEmpty).join('\n'),
+    );
   }
 
   Future<void> dispose() async {
