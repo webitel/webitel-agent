@@ -155,7 +155,7 @@ class WebitelSocket {
         final channelData = data['data'];
         final channelType = channelData?['channel'];
 
-        if (channelType == 'call') {
+        if (channelType == 'call' || channelType == 'out_call') {
           _handleChannelEvent(data);
         } else {
           logger.debug(
