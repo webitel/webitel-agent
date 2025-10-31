@@ -150,8 +150,18 @@ class WebitelSocket {
       case WebSocketEvent.notification:
         await _handleNotification(data);
         break;
+
       case WebSocketEvent.channel:
-        _handleChannelEvent(data);
+        final channelData = data['data'];
+        final channelType = channelData?['channel'];
+
+        if (channelType == 'call') {
+          _handleChannelEvent(data);
+        } else {
+          logger.debug(
+            'WebitelSocket: Ignored channel event of type $channelType',
+          );
+        }
         break;
       case WebSocketEvent.unknown:
         logger.debug('WebitelSocket: Unhandled event: ${data['event']}');
