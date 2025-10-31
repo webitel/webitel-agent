@@ -100,7 +100,7 @@ class WebitelSocket {
       //   'postProcessing=${_postProcessing.length}, '
       //   'isRecording=$_screenRecordingActive',
       // );
-      _updateScreenRecordingState();
+      _updateScreenRecordingState(false);
     });
   }
 
@@ -180,7 +180,7 @@ class WebitelSocket {
 
     if (attemptId == null) {
       logger.debug('[ChannelEvent] No attemptId found, status=$status');
-      _updateScreenRecordingState();
+      _updateScreenRecordingState(false);
       return;
     }
 
@@ -208,7 +208,7 @@ class WebitelSocket {
       }
     }
 
-    _updateScreenRecordingState();
+    _updateScreenRecordingState(false);
   }
 
   String? _lastCallId;
@@ -230,7 +230,7 @@ class WebitelSocket {
     final rawCallId = call['id']?.toString();
     final rawParentId = call['data']?['parent_id']?.toString();
     final attemptId = call['data']?['queue']?['attempt_id'];
-    final recordScreen = call['record_screen'] as bool? ?? false;
+    final recordScreen = call['data']['record_screen'] as bool? ?? false;
 
     final callId =
         (rawCallId != null && _isValidUuid(rawCallId)) ? rawCallId : null;
@@ -245,7 +245,7 @@ class WebitelSocket {
           _onCallRinging?.call(parentId ?? callId);
           _lastCallId = callId;
           activeCalls.add({'callId': callId, 'attempt_id': attemptId});
-          _updateScreenRecordingState();
+          _updateScreenRecordingState(true);
         } else {
           logger.warn(
             'WebitelSocket: Received ringing event with invalid call id: $rawCallId',
@@ -256,7 +256,7 @@ class WebitelSocket {
       case 'hangup':
         if (callId != null) {
           activeCalls.removeWhere((c) => c['callId'] == callId);
-          _updateScreenRecordingState();
+          _updateScreenRecordingState(false);
         } else {
           logger.warn(
             'WebitelSocket: Received hangup event with invalid call id: $rawCallId',
@@ -269,13 +269,13 @@ class WebitelSocket {
     }
   }
 
-  void _updateScreenRecordingState() {
+  void _updateScreenRecordingState(bool record) {
     final shouldRecord = activeCalls.isNotEmpty || _postProcessing.isNotEmpty;
 
-    if (shouldRecord && !_screenRecordingActive) {
+    if (shouldRecord && !_screenRecordingActive && record) {
       _screenRecordingActive = true;
       logger.info('[ScreenRecorder] Starting screen recording...');
-      onScreenRecordStart?.call({'reason': 'active_calls_or_postprocessing'});
+      onScreenRecordStart?.call({'root_id': _lastCallId ?? 'unknown'});
     } else if (!shouldRecord && _screenRecordingActive) {
       _screenRecordingActive = false;
       logger.info('[ScreenRecorder] Stopping screen recording...');
