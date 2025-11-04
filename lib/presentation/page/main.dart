@@ -6,7 +6,6 @@ import 'package:webitel_agent_flutter/logger.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 
 import '../../gen/assets.gen.dart';
-import '../../service/video/recorder_lifecycle.dart';
 import '../theme/text_style.dart';
 import '../../../main.dart';
 

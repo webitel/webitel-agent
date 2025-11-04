@@ -25,7 +25,7 @@ class AgentSession {
 
   factory AgentSession.fromJson(Map<String, dynamic> json) {
     return AgentSession(
-      agentId: json['agent_id'],
+      agentId: json['agent_id'] ?? 0,
       isAdmin: json['is_admin'],
       isSupervisor: json['is_supervisor'],
       status: json['status'],
