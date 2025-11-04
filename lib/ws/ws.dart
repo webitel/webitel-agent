@@ -140,9 +140,7 @@ class WebitelSocket {
     }
 
     if (!agentControlService.screenControlEnabled) {
-      if (event == WebSocketEvent.call ||
-          event == WebSocketEvent.notification ||
-          event == WebSocketEvent.channel) {
+      if (event == WebSocketEvent.call || event == WebSocketEvent.channel) {
         logger.debug(
           '[WebitelSocket] Agent control disabled → ignoring ${data['event']}',
         );
