@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_agent_flutter/logger.dart';
 import 'package:webitel_agent_flutter/service/webrtc/core/capturer.dart';
@@ -11,10 +12,10 @@ class StreamRecorder {
   final List<Map<String, dynamic>> iceServers;
 
   RTCPeerConnection? pc;
-  MediaStream? stream;
+  List<MediaStream> streams = [];
   String? _sessionID;
 
-  bool get isStreaming => pc != null && stream != null;
+  bool get isStreaming => pc != null && streams.isNotEmpty;
 
   StreamRecorder({
     required this.callID,
@@ -39,24 +40,56 @@ class StreamRecorder {
       }
     };
 
-    stream = await captureDesktopScreen();
-
-    if (stream == null) {
-      logger.error('[StreamRecorder] Could not capture screen');
-      throw Exception('Screen capture failed');
-    }
-
-    for (var track in stream!.getTracks()) {
-      final settings = track.getSettings();
-
-      logger.debug(
-        '[Capturer] Track settings: '
-        'width=${settings['width']}, '
-        'height=${settings['height']}, '
-        'frameRate=${settings['frameRate']}',
+    if (Platform.isWindows) {
+      logger.info(
+        '[StreamRecorder] Windows platform detected — capturing all monitors',
       );
+      streams = await captureAllDesktopScreensWindows();
 
-      pc!.addTrack(track, stream!);
+      if (streams.isEmpty) {
+        logger.error('[StreamRecorder] Could not capture any screen');
+        throw Exception('Screen capture failed');
+      }
+
+      for (final s in streams) {
+        for (var track in s.getTracks()) {
+          final settings = track.getSettings();
+
+          logger.debug(
+            '[Capturer] Track settings: '
+            'width=${settings['width']}, '
+            'height=${settings['height']}, '
+            'frameRate=${settings['frameRate']}',
+          );
+
+          pc!.addTrack(track, s);
+        }
+      }
+    } else {
+      logger.info(
+        '[StreamRecorder] Non-Windows platform — capturing single screen',
+      );
+      final stream = await captureDesktopScreen();
+
+      if (stream == null) {
+        logger.error('[StreamRecorder] Could not capture screen');
+        throw Exception('Screen capture failed');
+      }
+
+      streams = [stream];
+
+      for (var track in stream.getTracks()) {
+        final settings = track.getSettings();
+
+        logger.debug(
+          '[Capturer] Track settings: '
+          'width=${settings['width']}, '
+          'height=${settings['height']}, '
+          'frameRate=${settings['frameRate']}',
+        );
+
+        pc!.addTrack(track, stream);
+      }
     }
 
     final offer = await pc!.createOffer();
@@ -102,12 +135,14 @@ class StreamRecorder {
       );
     }
 
-    stream?.getTracks().forEach((t) {
-      logger.debug('[StreamRecorder] Stopping track: ${t.kind}');
-      t.stop();
-    });
+    for (final s in streams) {
+      for (var t in s.getTracks()) {
+        logger.debug('[StreamRecorder] Stopping track: ${t.kind}');
+        t.stop();
+      }
+    }
 
-    stream = null;
+    streams.clear();
 
     if (pc != null) {
       await pc!.close();
