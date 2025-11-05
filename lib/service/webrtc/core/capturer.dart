@@ -36,7 +36,7 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows() async {
 
       final constraints = {
         'video': {
-          'deviceId': source.id,
+          'deviceId': {'exact': source.id},
           'mandatory': {
             'maxWidth': width + 10,
             'minWidth': width - 10,
