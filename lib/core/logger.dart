@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
 
-import 'config/model/config.dart';
+import '../config/model/config.dart';
 
 final logger = LoggerService();
 

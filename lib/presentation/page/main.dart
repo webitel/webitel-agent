@@ -2,12 +2,12 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
-import 'package:webitel_agent_flutter/logger.dart';
+import 'package:webitel_agent_flutter/app/flow.dart';
+import 'package:webitel_agent_flutter/core/logger.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 
 import '../../gen/assets.gen.dart';
 import '../theme/text_style.dart';
-import '../../../main.dart';
 
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
@@ -43,10 +43,8 @@ class _MainPageState extends State<MainPage> {
     logger.info('[MainPage] App exit requested — stopping recorders...');
 
     try {
-      await stopAllRecorders();
-
+      await AppFlow.shutdown();
       await _socket?.disconnect();
-
       logger.info('[MainPage] Cleanup complete, allowing exit');
 
       return AppExitResponse.exit;

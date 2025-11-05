@@ -5,11 +5,11 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:webitel_agent_flutter/gen/assets.gen.dart';
-import 'package:webitel_agent_flutter/storage.dart';
+import 'package:webitel_agent_flutter/storage/storage.dart';
 import 'package:webitel_agent_flutter/ws/ws.dart';
 
-import 'config/config.dart';
-import 'logger.dart';
+import '../../config/config.dart';
+import '../../core/logger.dart';
 
 class TrayService with TrayListener {
   static final TrayService instance = TrayService._();

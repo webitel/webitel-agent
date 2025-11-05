@@ -1,8 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:webitel_agent_flutter/logger.dart';
-import 'package:webitel_agent_flutter/service/webrtc/core/capturer.dart';
+import 'package:webitel_agent_flutter/core/logger.dart';
+import 'package:webitel_agent_flutter/service/common/webrtc/capturer.dart';
 
 typedef OnReceiverClosed = void Function();
 typedef OnAccept =
@@ -14,7 +15,7 @@ class ScreenStreamer {
   final List<Map<String, dynamic>> iceServers;
   final OnReceiverClosed onClose;
   final LoggerService logger;
-  final MediaStream? localStream;
+  final List<MediaStream>? localStreams;
   final OnAccept onAccept;
 
   RTCPeerConnection? _pc;
@@ -26,7 +27,7 @@ class ScreenStreamer {
     required this.onClose,
     required this.logger,
     required this.onAccept,
-    this.localStream,
+    this.localStreams,
   });
 
   /// Factory method to build from screen_share notification
@@ -51,14 +52,18 @@ class ScreenStreamer {
 
     logger.info('[ScreenStreamer] screen_share received, parent_id=$parentId');
 
-    final localStream = await captureDesktopScreen();
+    List<MediaStream>? localStreams;
+
+    Platform.isWindows
+        ? localStreams = await captureAllDesktopScreensWindows()
+        : await captureAllDesktopScreensWindows();
 
     final screenStreamer = ScreenStreamer(
       id: parentId,
       peerSdp: sdp,
       iceServers: [],
       logger: logger,
-      localStream: localStream,
+      localStreams: localStreams,
       onClose: onClose,
       onAccept: onAccept,
     );
@@ -208,15 +213,31 @@ class ScreenStreamer {
       logger.info('[ScreenStreamer] Remote SDP offer set');
 
       // Add local tracks
-      if (localStream != null) {
-        for (final track in localStream!.getTracks()) {
-          await _pc!.addTrack(track, localStream!);
-          logger.debug('[ScreenStreamer] Added local track: ${track.kind}');
+      if (Platform.isWindows) {
+        if (localStreams != null && localStreams!.isNotEmpty) {
+          for (final stream in localStreams!) {
+            for (final track in stream.getTracks()) {
+              await _pc!.addTrack(track, stream);
+              logger.debug(
+                '[ScreenStreamer] Added Windows track: ${track.kind}',
+              );
+            }
+          }
+        } else {
+          logger.warn('[ScreenStreamer] No local streams found for Windows');
         }
       } else {
-        logger.warn('[ScreenStreamer] No local stream to add');
+        // macOS / others — беремо лише перший стрім
+        if (localStreams != null && localStreams!.isNotEmpty) {
+          final stream = localStreams!.first;
+          for (final track in stream.getTracks()) {
+            await _pc!.addTrack(track, stream);
+            logger.debug('[ScreenStreamer] Added macOS track: ${track.kind}');
+          }
+        } else {
+          logger.warn('[ScreenStreamer] No local stream available');
+        }
       }
-
       // Create answer
       // In offer/answer options:
       final answer = await _pc!.createAnswer({});
@@ -255,10 +276,38 @@ class ScreenStreamer {
 
   void close(String reason) {
     logger.warn('[ScreenStreamer] Closing: $reason');
-    _pc?.close();
-    _pc?.dispose();
-    _pc = null;
-    localStream?.dispose();
+
+    try {
+      if (localStreams != null && localStreams!.isNotEmpty) {
+        for (final stream in localStreams!) {
+          for (final track in stream.getTracks()) {
+            try {
+              track.stop();
+              logger.debug('[ScreenStreamer] Stopped track: ${track.kind}');
+            } catch (e) {
+              logger.error('[ScreenStreamer] Error stopping track: $e');
+            }
+          }
+
+          try {
+            stream.dispose();
+            logger.debug('[ScreenStreamer] Disposed stream');
+          } catch (e) {
+            logger.error('[ScreenStreamer] Error disposing stream: $e');
+          }
+        }
+        localStreams!.clear();
+      }
+
+      _pc?.close();
+      _pc?.dispose();
+      _pc = null;
+
+      logger.info('[ScreenStreamer] Resources released successfully');
+    } catch (e, st) {
+      logger.error('[ScreenStreamer] Error during close: $e\n$st');
+    }
+
     onClose();
   }
 }

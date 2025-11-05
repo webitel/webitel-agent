@@ -6,8 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:screen_capturer/screen_capturer.dart';
-import 'package:webitel_agent_flutter/storage.dart';
-import 'logger.dart';
+import 'package:webitel_agent_flutter/storage/storage.dart';
+import '../../core/logger.dart';
 
 class ScreenshotSenderService {
   final String baseUrl;

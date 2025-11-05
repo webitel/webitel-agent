@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_agent_flutter/config/config.dart';
-import 'package:webitel_agent_flutter/logger.dart';
+import 'package:webitel_agent_flutter/core/logger.dart';
 
 Future<List<MediaStream>> captureAllDesktopScreensWindows() async {
   final config = AppConfig.instance;

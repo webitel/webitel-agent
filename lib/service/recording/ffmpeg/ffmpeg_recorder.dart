@@ -9,10 +9,10 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:webitel_agent_flutter/storage.dart';
+import 'package:webitel_agent_flutter/storage/storage.dart';
 import 'package:win32/win32.dart';
 
-import '../../logger.dart' show logger;
+import '../../../core/logger.dart' show logger;
 
 class LocalVideoRecorder {
   final String callId;
@@ -414,9 +414,7 @@ class LocalVideoRecorder {
         // await _deleteLocalFile();
         return true;
       } else {
-        _logger.error(
-          '❌ Upload failed: ${response.statusCode} ${response.body}',
-        );
+        _logger.error('Upload failed: ${response.statusCode} ${response.body}');
         return false;
       }
     } catch (e) {

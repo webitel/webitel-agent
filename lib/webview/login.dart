@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:webitel_agent_flutter/logger.dart';
+import 'package:webitel_agent_flutter/core/logger.dart';
 import 'package:webitel_agent_flutter/presentation/theme/defaults.dart';
 import 'package:webitel_agent_flutter/presentation/theme/text_style.dart';
-import 'package:webitel_agent_flutter/storage.dart';
+import 'package:webitel_agent_flutter/storage/storage.dart';
 
 class LoginWebView extends StatefulWidget {
   final String url;

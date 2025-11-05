@@ -2,8 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
-import 'package:webitel_agent_flutter/logger.dart';
-import 'package:webitel_agent_flutter/storage.dart';
+import 'package:webitel_agent_flutter/core/logger.dart';
+import 'package:webitel_agent_flutter/storage/storage.dart';
 
 Future<({RTCSessionDescription answer, String streamId})> sendSDPToServer({
   required String url,
