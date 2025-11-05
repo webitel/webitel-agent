@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -36,7 +37,10 @@ ScreenshotSenderService? screenshotService;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await windowManager.ensureInitialized();
+  await windowManager.setPreventClose(true);
   windowManager.addListener(MyWindowListener());
+
   await _startAppFlow();
 }
 
@@ -48,6 +52,7 @@ class MyWindowListener extends WindowListener {
 
     await stopAllRecorders();
     screenshotService?.stop();
+    await windowManager.destroy();
   }
 }
 
