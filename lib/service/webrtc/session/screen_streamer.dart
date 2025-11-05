@@ -2,10 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_agent_flutter/logger.dart';
-import 'package:webitel_agent_flutter/main.dart';
-import 'package:webitel_agent_flutter/service/video/video_recorder.dart';
 import 'package:webitel_agent_flutter/service/webrtc/core/capturer.dart';
-import 'package:webitel_agent_flutter/ws/ws.dart';
 
 typedef OnReceiverClosed = void Function();
 typedef OnAccept =
@@ -95,11 +92,6 @@ class ScreenStreamer {
         'iceServers': iceServers,
         'iceConnectionReceivingTimeout': 15000,
       });
-
-      // await _pc!.setConfiguration({
-      //   'iceServers': iceServers,
-      //   'sdpSemantics': 'unified-plan',
-      // });
 
       logger.debug('[ScreenStreamer] Peer connection created');
 
@@ -239,25 +231,6 @@ class ScreenStreamer {
       logger.error('[ScreenStreamer] Failed to start: $e');
       logger.debug(stack.toString());
       close('Exception during start: $e');
-    }
-  }
-
-  Future<void> restartIceFlow() async {
-    logger.info('[ScreenStreamer] Performing full ICE restart');
-
-    try {
-      final offer = await _pc!.createOffer({'iceRestart': true});
-      await _pc!.setLocalDescription(offer);
-
-      logger.debug('[ScreenStreamer] Restart ICE offer created and set');
-
-      await onAccept('ss_restart', {'id': id, 'sdp': offer.sdp});
-
-      logger.info('[ScreenStreamer] ICE restart offer sent');
-    } catch (e, stack) {
-      logger.error('[ScreenStreamer] ICE restart failed: $e');
-      logger.debug(stack.toString());
-      close('ICE restart failed');
     }
   }
 
