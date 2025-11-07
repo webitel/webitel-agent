@@ -1,8 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:webitel_agent_flutter/config/config.dart';
-import 'package:webitel_agent_flutter/core/logger.dart';
+import 'package:webitel_desk_track/config/config.dart';
+import 'package:webitel_desk_track/core/logger.dart';
 
 Future<List<MediaStream>> captureAllDesktopScreensWindows() async {
   final config = AppConfig.instance;
@@ -55,9 +55,9 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows() async {
         );
         streams.add(stream);
 
-        logger.info('[Capturer] ✅ Capture started for ${source.name}');
+        logger.info('[Capturer] Capture started for ${source.name}');
       } catch (e, st) {
-        logger.error('[Capturer] ❌ Error capturing ${source.name}', e, st);
+        logger.error('[Capturer] Error capturing ${source.name}', e, st);
       }
     }
 

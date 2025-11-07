@@ -1,5 +1,5 @@
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:webitel_agent_flutter/core/logger.dart';
+import 'package:webitel_desk_track/core/logger.dart';
 
 Future<RTCPeerConnection> createPeerConnectionWithConfig(
   List<Map<String, dynamic>> iceServers,

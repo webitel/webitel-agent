@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:screen_capturer/screen_capturer.dart';
-import 'package:webitel_agent_flutter/storage/storage.dart';
+import 'package:webitel_desk_track/storage/storage.dart';
 import '../../core/logger.dart';
 
 class ScreenshotSenderService {
@@ -61,7 +61,6 @@ class ScreenshotSenderService {
         return;
       }
 
-      // Fetch screen_control
       // Fetch screen_control
       final agentsUri = Uri.parse(
         '$baseUrl/api/call_center/agents?page=1&size=1&fields=screen_control&id=$agentId',
@@ -142,7 +141,7 @@ class ScreenshotSenderService {
         );
       }
     } catch (e, st) {
-      logger.error('[Screenshot] failed to fetch control/interval: $e\n$st');
+      logger.error('[Screenshot] failed to fetch control/interval:', e, st);
     }
   }
 
@@ -267,7 +266,7 @@ class ScreenshotSenderService {
         );
       }
     } catch (e, st) {
-      logger.error('[Screenshot] error: $e\n$st');
+      logger.error('[Screenshot] error:', e, st);
     }
   }
 }

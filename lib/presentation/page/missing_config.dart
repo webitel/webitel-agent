@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:webitel_agent_flutter/presentation/theme/text_style.dart';
+import 'package:webitel_desk_track/presentation/theme/text_style.dart';
 
 class MissingConfigPage extends StatelessWidget {
   const MissingConfigPage({super.key});

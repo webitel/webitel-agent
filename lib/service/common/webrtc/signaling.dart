@@ -2,8 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
-import 'package:webitel_agent_flutter/core/logger.dart';
-import 'package:webitel_agent_flutter/storage/storage.dart';
+import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/storage/storage.dart';
 
 Future<({RTCSessionDescription answer, String streamId})> sendSDPToServer({
   required String url,
@@ -54,8 +54,8 @@ Future<({RTCSessionDescription answer, String streamId})> sendSDPToServer({
       answer: RTCSessionDescription(json['sdp_answer'], 'answer'),
       streamId: json['id'] as String,
     );
-  } catch (e, stack) {
-    logger.error('[Signaling] Exception during SDP exchange: $e', stack);
+  } catch (e, st) {
+    logger.error('[Signaling] Exception during SDP exchange:', e, st);
     rethrow;
   }
 }
@@ -81,8 +81,8 @@ Future<void> stopStreamOnServer({
     }
 
     logger.info('[Signaling] Stream successfully stopped on server');
-  } catch (e, stack) {
-    logger.error('[Signaling] Exception during stream stop: $e', stack);
+  } catch (e, st) {
+    logger.error('[Signaling] Exception during stream stop:', e, st);
     rethrow;
   }
 }

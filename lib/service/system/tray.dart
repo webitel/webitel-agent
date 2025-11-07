@@ -4,9 +4,10 @@ import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:tray_manager/tray_manager.dart';
-import 'package:webitel_agent_flutter/gen/assets.gen.dart';
-import 'package:webitel_agent_flutter/storage/storage.dart';
-import 'package:webitel_agent_flutter/ws/ws.dart';
+import 'package:webitel_desk_track/gen/assets.gen.dart';
+import 'package:webitel_desk_track/storage/storage.dart';
+import 'package:webitel_desk_track/ws/model/agent_status.dart';
+import 'package:webitel_desk_track/ws/ws.dart';
 
 import '../../config/config.dart';
 import '../../core/logger.dart';
@@ -136,7 +137,7 @@ class TrayService with TrayListener {
         }
       }
     } catch (e, s) {
-      logger.error('TrayService: Failed to upload config: $e\n$s');
+      logger.error('TrayService: Failed to upload config:', e, s);
       await trayManager.setToolTip('Config upload failed');
     }
   }

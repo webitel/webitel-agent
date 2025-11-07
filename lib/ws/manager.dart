@@ -2,10 +2,10 @@
 import 'dart:async';
 import 'dart:ui';
 
-import 'package:webitel_agent_flutter/ws/ws.dart';
-import 'package:webitel_agent_flutter/ws/ws_config.dart';
-import 'package:webitel_agent_flutter/core/logger.dart';
-import 'package:webitel_agent_flutter/service/control/agent_control.dart';
+import 'package:webitel_desk_track/ws/ws.dart';
+import 'package:webitel_desk_track/ws/ws_config.dart';
+import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/service/control/agent_control.dart';
 
 /// Thin manager around WebitelSocket to centralize connect/auth handling.
 class SocketManager {
@@ -14,9 +14,7 @@ class SocketManager {
   String token;
 
   WebitelSocket? _socket;
-  AgentControlService? _agentControlService;
-
-  VoidCallback? onAuthenticationFailed; // assigned by AppFlow
+  VoidCallback? onAuthenticationFailed;
 
   SocketManager({
     required this.baseUrl,
@@ -50,7 +48,7 @@ class SocketManager {
 
       return true;
     } catch (e, st) {
-      logger.error('[SocketManager] connect/auth failed: $e\n$st');
+      logger.error('[SocketManager] connect/auth failed:', e, st);
       return false;
     }
   }

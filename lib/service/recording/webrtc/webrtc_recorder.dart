@@ -1,13 +1,13 @@
 import 'dart:io';
-
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:webitel_agent_flutter/core/logger.dart';
-import 'package:webitel_agent_flutter/service/common/webrtc/capturer.dart';
-import 'package:webitel_agent_flutter/service/common/webrtc/peer_connection.dart';
-import 'package:webitel_agent_flutter/service/common/webrtc/signaling.dart';
+import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/service/common/webrtc/capturer.dart';
+import 'package:webitel_desk_track/service/common/webrtc/peer_connection.dart';
+import 'package:webitel_desk_track/service/common/webrtc/signaling.dart';
+import 'package:webitel_desk_track/service/recording/recorder.dart';
 
-class StreamRecorder {
-  final String callID;
+class StreamRecorder implements Recorder {
+  final String callId;
   final String token;
   final String sdpResolverUrl;
   final List<Map<String, dynamic>> iceServers;
@@ -16,139 +16,91 @@ class StreamRecorder {
   List<MediaStream> streams = [];
   String? _sessionID;
 
-  bool get isStreaming => pc != null && streams.isNotEmpty;
-
   StreamRecorder({
-    required this.callID,
+    required this.callId,
     required this.token,
     required this.sdpResolverUrl,
     required this.iceServers,
   });
 
-  Future<void> start() async {
-    logger.info('[StreamRecorder] Starting stream sender for call $callID');
-
+  @override
+  Future<void> start({required String recordingId}) async {
+    logger.info('[StreamRecorder] Starting stream for $callId');
     pc = await createPeerConnectionWithConfig(iceServers);
 
     pc!.onIceConnectionState = (state) {
-      logger.debug('[StreamRecorder] ICE connection state: $state');
       if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
           state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
-        logger.warn(
-          '[StreamRecorder] ICE disconnected/failed, stopping stream...',
-        );
+        logger.warn('[StreamRecorder] ICE failed, stopping...');
         stop();
       }
     };
 
     if (Platform.isWindows) {
-      logger.info(
-        '[StreamRecorder] Windows platform detected — capturing all monitors',
-      );
       streams = await captureAllDesktopScreensWindows();
-
-      if (streams.isEmpty) {
-        logger.error('[StreamRecorder] Could not capture any screen');
-        throw Exception('Screen capture failed');
-      }
-
-      for (final s in streams) {
-        for (var track in s.getTracks()) {
-          final settings = track.getSettings();
-
-          logger.debug(
-            '[Capturer] Track settings: '
-            'width=${settings['width']}, '
-            'height=${settings['height']}, '
-            'frameRate=${settings['frameRate']}',
-          );
-
-          pc!.addTrack(track, s);
-        }
-      }
     } else {
-      logger.info(
-        '[StreamRecorder] Non-Windows platform — capturing single screen',
-      );
       final stream = await captureDesktopScreen();
+      if (stream != null) streams = [stream];
+    }
 
-      if (stream == null) {
-        logger.error('[StreamRecorder] Could not capture screen');
-        throw Exception('Screen capture failed');
-      }
+    if (streams.isEmpty) throw Exception('No screens captured');
 
-      streams = [stream];
-
-      for (var track in stream.getTracks()) {
-        final settings = track.getSettings();
-
-        logger.debug(
-          '[Capturer] Track settings: '
-          'width=${settings['width']}, '
-          'height=${settings['height']}, '
-          'frameRate=${settings['frameRate']}',
-        );
-
-        pc!.addTrack(track, stream);
+    for (final s in streams) {
+      for (final t in s.getTracks()) {
+        pc!.addTrack(t, s);
       }
     }
 
     final offer = await pc!.createOffer();
     await pc!.setLocalDescription(offer);
-    logger.debug('[StreamRecorder] Created SDP offer');
 
-    final localDescription = await pc!.getLocalDescription();
-    if (localDescription == null) {
-      throw Exception('Local SDP is null');
-    }
+    final desc = await pc!.getLocalDescription();
+    if (desc == null) throw Exception('Local SDP is null');
 
     final response = await sendSDPToServer(
       url: sdpResolverUrl,
       token: token,
-      offer: localDescription,
-      id: callID,
+      offer: desc,
+      id: callId,
     );
 
     _sessionID = response.streamId;
     await pc!.setRemoteDescription(response.answer);
-    logger.info(
-      '[StreamRecorder] Set remote SDP, streaming started (id=$_sessionID)',
-    );
+    logger.info('[StreamRecorder] Stream started (id=$_sessionID)');
   }
 
+  @override
   Future<void> stop() async {
-    logger.info('[StreamRecorder] Stopping stream sender...');
-
+    logger.info('[StreamRecorder] Stopping stream...');
     if (_sessionID != null) {
-      final fullStopUrl = '$sdpResolverUrl/$_sessionID';
       try {
         await stopStreamOnServer(
-          url: fullStopUrl,
+          url: '$sdpResolverUrl/$_sessionID',
           token: token,
-          id: _sessionID ?? '',
+          id: _sessionID!,
         );
       } catch (e) {
-        logger.warn('[StreamRecorder] Failed to stop stream on server: $e');
+        logger.warn('[StreamRecorder] stopStreamOnServer failed: $e');
       }
-    } else {
-      logger.warn(
-        '[StreamRecorder] No stream ID received, skipping server stop',
-      );
     }
 
     for (final s in streams) {
       for (var t in s.getTracks()) {
-        logger.debug('[StreamRecorder] Stopping track: ${t.kind}');
         t.stop();
       }
     }
-
     streams.clear();
+    await pc?.close();
+    pc = null;
+  }
 
-    if (pc != null) {
-      await pc!.close();
-      logger.debug('[StreamRecorder] Closed peer connection');
-      pc = null;
-    }
+  @override
+  Future<void> upload() async {
+    // WebRTC streaming — upload not applicable
+  }
+
+  @override
+  Future<void> cleanup() async {
+    // Nothing to cleanup for live streams
   }
 }

@@ -7,6 +7,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   desktop_screenshot
   file_selector_windows
   flutter_inappwebview_windows
+  flutter_secure_storage_windows
   flutter_webrtc
   screen_capturer_windows
   screen_retriever_windows

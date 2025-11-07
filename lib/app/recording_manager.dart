@@ -1,257 +1,130 @@
-// lib/service/recording/recording_manager.dart
 import 'dart:async';
+import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/config/config.dart';
+import 'package:webitel_desk_track/service/common/webrtc/config.dart';
+import 'package:webitel_desk_track/service/recording/ffmpeg/recorder.dart';
+import 'package:webitel_desk_track/service/recording/recorder.dart';
+import 'package:webitel_desk_track/service/recording/webrtc/webrtc_recorder.dart';
+import 'package:webitel_desk_track/storage/storage.dart';
+import 'package:webitel_desk_track/ws/ws.dart';
 
-import 'package:webitel_agent_flutter/core/logger.dart';
-import 'package:webitel_agent_flutter/service/common/webrtc/config.dart';
-import 'package:webitel_agent_flutter/service/recording/webrtc/webrtc_recorder.dart';
-import 'package:webitel_agent_flutter/service/recording/ffmpeg/ffmpeg_recorder.dart';
-import 'package:webitel_agent_flutter/ws/ws.dart';
-import 'package:webitel_agent_flutter/config/config.dart';
-import 'package:webitel_agent_flutter/storage/storage.dart';
+enum RecordingType { call, screen }
 
-/// Central manager that handles call and screen recordings.
-/// It decides between local (ffmpeg) or stream (WebRTC) based on AppConfig.
 class RecordingManager {
-  LocalVideoRecorder? _callRecorder;
-  StreamRecorder? _callStream;
+  final _recorders = <RecordingType, Recorder?>{
+    RecordingType.call: null,
+    RecordingType.screen: null,
+  };
 
-  LocalVideoRecorder? _screenRecorder;
-  StreamRecorder? _screenStream;
+  final _timers = <RecordingType, Map<String, Timer>>{
+    RecordingType.call: {},
+    RecordingType.screen: {},
+  };
 
-  final Map<String, Timer> _callTimers = {};
-  final Map<String, Timer> _screenTimers = {};
+  // ---------------------------------------------------------------------------
+  // Socket binding
+  // ---------------------------------------------------------------------------
 
-  bool _initialized = false;
-
-  void init() {
-    _initialized = true;
-  }
-
-  /// Attach a socket so we can react on calls / screen events.
   void attachSocket(WebitelSocket socket) {
     socket.onCallEvent(
-      onRinging: (callId) => _onCallStart(socket, callId),
-      onHangup: (callId) => _onCallStop(callId),
+      onRinging: (callId) => _onStart(callId, type: RecordingType.call),
+      onHangup: (callId) => _onStop(callId, type: RecordingType.call),
     );
 
     socket.onScreenRecordEvent(
-      onStart: (body) => _onScreenStart(socket, body),
-      onStop: (body) => _onScreenStop(body),
+      onStart: (body) => _onStart(body['root_id'], type: RecordingType.screen),
+      onStop: (body) => _onStop(body['root_id'], type: RecordingType.screen),
     );
   }
 
-  // ---------------- Call handlers ----------------
-  Future<void> _onCallStart(WebitelSocket socket, String callId) async {
-    logger.info('[RecordingManager] onCallStart: $callId');
+  // ---------------------------------------------------------------------------
+  // Lifecycle
+  // ---------------------------------------------------------------------------
 
-    // stop any previous run
-    _callStream?.stop();
-    await _stopLocalRecorderIfExists(_callRecorder);
-
+  Future<void> _onStart(String? id, {required RecordingType type}) async {
     final appConfig = AppConfig.instance;
-    final token = await SecureStorageService().readAccessToken();
+    final token = await SecureStorageService().readAccessToken() ?? '';
+    final recordingId = id ?? DateTime.now().millisecondsSinceEpoch.toString();
 
-    if (appConfig.videoSaveLocally) {
-      _callRecorder = LocalVideoRecorder(
-        callId: callId,
-        agentToken: token ?? '',
-        baseUrl: appConfig.baseUrl,
-        channel: 'screensharing',
-      );
-      try {
-        await _callRecorder!.startRecording(recordingId: callId);
-      } catch (e, st) {
-        logger.error('[RecordingManager] call local start failed: $e\n$st');
-      }
-    } else {
-      _callStream = StreamRecorder(
-        callID: callId,
-        token: token ?? '',
-        sdpResolverUrl: WebRTCConfig.fromEnv().sdpUrl,
-        iceServers: appConfig.webrtcIceServers,
-      );
-      try {
-        await _callStream!.start();
-      } catch (e, st) {
-        logger.error('[RecordingManager] call stream start failed: $e\n$st');
-      }
-    }
+    // Ensure previous recorder stopped
+    await _recorders[type]?.stop();
 
-    // schedule max duration stop
-    _callTimers[callId]?.cancel();
-    _callTimers[callId] = Timer(
+    final isScreen = type == RecordingType.screen;
+    final recorder =
+        appConfig.videoSaveLocally
+            ? LocalVideoRecorder(
+              callId: recordingId,
+              agentToken: token,
+              baseUrl: appConfig.baseUrl,
+              channel: isScreen ? 'screensharing' : 'call',
+            )
+            : StreamRecorder(
+              callId: recordingId,
+              token: token,
+              sdpResolverUrl: WebRTCConfig.fromEnv().sdpUrl,
+              iceServers: appConfig.webrtcIceServers,
+            );
+
+    _recorders[type] = recorder;
+
+    await recorder.start(recordingId: recordingId);
+
+    // Set auto-stop timer
+    final t = Timer(
       Duration(seconds: appConfig.maxCallRecordDuration),
-      () => _onCallMaxDurationReached(callId),
+      () => _onStop(recordingId, type: type),
     );
+    _timers[type]![recordingId] = t;
+
+    logger.info('[RecordingManager] Started $type → $recordingId');
   }
 
-  Future<void> _onCallStop(String callId) async {
-    logger.info('[RecordingManager] onCallStop: $callId');
-
-    _callTimers[callId]?.cancel();
-    _callTimers.remove(callId);
-
-    _callStream?.stop();
-    _callStream = null;
-
-    if (_callRecorder != null) {
-      try {
-        await _callRecorder!.stopRecording();
-        final success = await _callRecorder!.uploadVideoWithRetry();
-        if (!success) logger.error('[RecordingManager] call upload failed');
-      } catch (e, st) {
-        logger.error('[RecordingManager] stop/upload call error: $e\n$st');
-      } finally {
-        await LocalVideoRecorder.cleanupOldVideos();
-        _callRecorder = null;
-      }
-    }
-  }
-
-  Future<void> _onCallMaxDurationReached(String callId) async {
-    logger.info('[RecordingManager] call max duration reached: $callId');
-    await _onCallStop(callId);
-  }
-
-  // ---------------- Screen handlers ----------------
-  Future<void> _onScreenStart(WebitelSocket socket, Map body) async {
-    logger.info('[RecordingManager] onScreenStart');
-
-    _screenStream?.stop();
-    await _stopLocalRecorderIfExists(_screenRecorder);
-
-    final recordingId =
-        body['root_id'] ?? DateTime.now().millisecondsSinceEpoch.toString();
-    final appConfig = AppConfig.instance;
-    final token = await SecureStorageService().readAccessToken();
-
-    if (appConfig.videoSaveLocally) {
-      _screenRecorder = LocalVideoRecorder(
-        callId: recordingId,
-        agentToken: token ?? '',
-        baseUrl: appConfig.baseUrl,
-        channel: 'screensharing',
-      );
-      try {
-        await _screenRecorder!.startRecording(recordingId: recordingId);
-      } catch (e, st) {
-        logger.error('[RecordingManager] screen local start failed: $e\n$st');
-      }
-    } else {
-      _screenStream = StreamRecorder(
-        callID: recordingId,
-        token: token ?? '',
-        sdpResolverUrl: WebRTCConfig.fromEnv().sdpUrl,
-        iceServers: appConfig.webrtcIceServers,
-      );
-      try {
-        await _screenStream!.start();
-      } catch (e, st) {
-        logger.error('[RecordingManager] screen stream start failed: $e\n$st');
-      }
-    }
-
-    // schedule stop by max duration
-    _screenTimers[recordingId]?.cancel();
-    _screenTimers[recordingId] = Timer(
-      Duration(seconds: appConfig.maxCallRecordDuration),
-      () async {
-        logger.info(
-          '[RecordingManager] screen max duration reached: $recordingId',
-        );
-        await _onScreenStop({'root_id': recordingId});
-      },
-    );
-  }
-
-  Future<void> _onScreenStop(Map body) async {
-    final recordingId = body['root_id'] ?? 'unknown';
-    logger.info('[RecordingManager] onScreenStop: $recordingId');
-
-    _screenTimers[recordingId]?.cancel();
-    _screenTimers.remove(recordingId);
-
-    _screenStream?.stop();
-    _screenStream = null;
-
-    if (_screenRecorder != null) {
-      try {
-        await _screenRecorder!.stopRecording();
-        final success = await _screenRecorder!.uploadVideoWithRetry();
-        if (!success) logger.error('[RecordingManager] screen upload failed');
-      } catch (e, st) {
-        logger.error('[RecordingManager] stop/upload screen error: $e\n$st');
-      } finally {
-        await LocalVideoRecorder.cleanupOldVideos();
-        _screenRecorder = null;
-      }
-    }
-  }
-
-  // ---------------- Utilities ----------------
-  Future<void> _stopLocalRecorderIfExists(LocalVideoRecorder? recorder) async {
+  Future<void> _onStop(String id, {required RecordingType type}) async {
+    final recorder = _recorders[type];
     if (recorder == null) return;
+
+    _timers[type]![id]?.cancel();
+    _timers[type]!.remove(id);
+
     try {
-      await recorder.stopRecording();
-      final success = await recorder.uploadVideoWithRetry();
-      if (!success) {
-        logger.error('[RecordingManager] upload failed during swap');
-      }
+      await recorder.stop();
+      await recorder.upload();
+      await recorder.cleanup();
+      logger.info('[RecordingManager] Stopped $type → $id');
     } catch (e, st) {
-      logger.error('[RecordingManager] swap/stop upload error: $e\n$st');
+      logger.warn('[RecordingManager] stop/upload error ($type): $e\n$st');
     } finally {
-      await LocalVideoRecorder.cleanupOldVideos();
+      _recorders[type] = null;
     }
   }
 
-  /// Stop all active recorders and upload pending files.
+  // ---------------------------------------------------------------------------
+  // Stop all
+  // ---------------------------------------------------------------------------
+
   Future<void> stopAllAndUpload() async {
     logger.info('[RecordingManager] stopAllAndUpload called');
 
-    // cancel timers
-    for (final t in _callTimers.values) {
-      t.cancel();
-    }
-    _callTimers.clear();
-    for (final t in _screenTimers.values) {
-      t.cancel();
-    }
-    _screenTimers.clear();
-
-    // stop streams
-    _callStream?.stop();
-    _callStream = null;
-    _screenStream?.stop();
-    _screenStream = null;
-
-    // stop local recorders & upload
-    try {
-      if (_callRecorder != null) {
-        await _callRecorder!.stopRecording();
-        await Future.delayed(const Duration(seconds: 1));
-        await _callRecorder!.uploadVideoWithRetry();
+    for (final map in _timers.values) {
+      for (final t in map.values) {
+        t.cancel();
       }
-    } catch (e, st) {
-      logger.warn('[RecordingManager] finishing call recorder error: $e\n$st');
-    } finally {
-      _callRecorder = null;
+      map.clear();
     }
 
-    try {
-      if (_screenRecorder != null) {
-        await _screenRecorder!.stopRecording();
-        await Future.delayed(const Duration(seconds: 1));
-        await _screenRecorder!.uploadVideoWithRetry();
+    for (final type in RecordingType.values) {
+      final recorder = _recorders[type];
+      if (recorder == null) continue;
+
+      try {
+        await recorder.stop();
+        await recorder.upload();
+        await recorder.cleanup();
+      } catch (e, st) {
+        logger.warn('[RecordingManager] error stopping $type: $e\n$st');
+      } finally {
+        _recorders[type] = null;
       }
-    } catch (e, st) {
-      logger.warn(
-        '[RecordingManager] finishing screen recorder error: $e\n$st',
-      );
-    } finally {
-      _screenRecorder = null;
     }
-
-    // cleanup local temp files
-    await LocalVideoRecorder.cleanupOldVideos();
   }
 }

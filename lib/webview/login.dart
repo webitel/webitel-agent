@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:webitel_agent_flutter/core/logger.dart';
-import 'package:webitel_agent_flutter/presentation/theme/defaults.dart';
-import 'package:webitel_agent_flutter/presentation/theme/text_style.dart';
-import 'package:webitel_agent_flutter/storage/storage.dart';
+import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/presentation/theme/defaults.dart';
+import 'package:webitel_desk_track/presentation/theme/text_style.dart';
+import 'package:webitel_desk_track/storage/storage.dart';
 
 class LoginWebView extends StatefulWidget {
   final String url;
@@ -25,6 +25,7 @@ class _LoginWebViewState extends State<LoginWebView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white,
       body: Stack(
         children: [
           InAppWebView(
@@ -32,9 +33,18 @@ class _LoginWebViewState extends State<LoginWebView> {
             initialSettings: InAppWebViewSettings(
               javaScriptEnabled: true,
               mediaPlaybackRequiresUserGesture: false,
+              useShouldOverrideUrlLoading: true,
+              clearCache: true,
+              cacheEnabled: false,
+              allowsInlineMediaPlayback: true,
+              useOnLoadResource: true,
             ),
             onWebViewCreated: (controller) {
               _controller = controller;
+            },
+            onLoadStart: (controller, url) {
+              _loading = true;
+              setState(() {});
             },
             onLoadStop: (controller, url) async {
               _loading = false;
@@ -42,9 +52,15 @@ class _LoginWebViewState extends State<LoginWebView> {
               setState(() {});
 
               if (url != null && !_tokenHandled) {
-                final uri = Uri.parse(url.toString());
+                await _handleTokenFromUri(Uri.parse(url.toString()));
+              }
+            },
+            shouldOverrideUrlLoading: (controller, navigationAction) async {
+              final uri = navigationAction.request.url;
+              if (uri != null && !_tokenHandled) {
                 await _handleTokenFromUri(uri);
               }
+              return NavigationActionPolicy.ALLOW;
             },
             onReceivedError: (controller, request, error) {
               if (request.isForMainFrame!) {
@@ -73,10 +89,8 @@ class _LoginWebViewState extends State<LoginWebView> {
             },
           ),
 
-          // Loading spinner
           if (_loading) const Center(child: CircularProgressIndicator()),
 
-          // Error screen
           if (_hasError)
             Center(
               child: Padding(
@@ -91,14 +105,13 @@ class _LoginWebViewState extends State<LoginWebView> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      Defaults.captureTitle, // e.g., "Something went wrong"
+                      Defaults.captureTitle,
                       style: AppTextStyles.captureTitle,
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 4),
                     Text(
                       Defaults.captureSubtitle,
-                      // e.g., "Unable to load the login page"
                       style: AppTextStyles.captureSubtitle,
                       textAlign: TextAlign.center,
                     ),
@@ -128,16 +141,18 @@ class _LoginWebViewState extends State<LoginWebView> {
 
     if (token != null && token.isNotEmpty) {
       _tokenHandled = true;
-
       logger.debug('Found token: $token');
-      await _storage.writeAccessToken(token);
-      logger.info('Token saved. Returning from login screen.');
 
-      if (mounted) {
-        Navigator.of(context).pop(true);
+      try {
+        await _storage.writeAccessToken(token);
+        logger.info('Token saved successfully.');
+
+        if (mounted) {
+          Navigator.of(context).pop(true);
+        }
+      } catch (e, st) {
+        logger.error('Failed to save token: $e\n$st');
       }
-    } else {
-      logger.debug('No accessToken in URI.');
     }
   }
 }

@@ -1,4 +1,4 @@
-import 'package:webitel_agent_flutter/config/config.dart';
+import 'package:webitel_desk_track/config/config.dart';
 
 class WebRTCConfig {
   final String sdpUrl;

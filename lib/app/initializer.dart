@@ -1,71 +1,91 @@
-// lib/app/app_initializer.dart
 import 'package:flutter/material.dart';
-import 'package:webitel_agent_flutter/presentation/page/main.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:webitel_agent_flutter/config/config.dart';
-import 'package:webitel_agent_flutter/core/logger.dart';
-import 'package:webitel_agent_flutter/presentation/page/missing_config.dart';
-import 'package:webitel_agent_flutter/app/flow.dart';
-import 'package:webitel_agent_flutter/service/system/tray.dart';
-import 'package:webitel_agent_flutter/app/window_listener.dart';
+import 'package:webitel_desk_track/config/config.dart';
+import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/presentation/page/main.dart';
+import 'package:webitel_desk_track/presentation/page/missing_config.dart';
+import 'package:webitel_desk_track/app/flow.dart';
+import 'package:webitel_desk_track/service/system/tray.dart';
+import 'package:webitel_desk_track/app/window_listener.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 class AppInitializer {
-  /// Run the whole app initialization.
   static Future<void> run() async {
-    // window manager must be initialized early for desktop apps
+    // --- Window Setup ---
     await windowManager.ensureInitialized();
     await windowManager.setPreventClose(true);
     windowManager.addListener(MyWindowListener());
 
-    // load app config and init logger
+    // --- Try to load config ---
     final config = await AppConfig.load();
     await logger.init(config);
 
-    // init tray (shows menu even before UI)
+    // --- Initialize system tray ---
     await TrayService.instance.initTray();
 
-    // Start the UI: either main app or missing-config page
     if (config != null) {
+      // Config exists → start main app
       runApp(const AppRoot());
-      // start the app flow after UI is up
-      // AppFlow.start will do login/init and attach services
-      WidgetsBinding.instance.addPostFrameCallback((_) => AppFlow.start());
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await AppFlow.start();
+      });
     } else {
-      runApp(
-        const MaterialApp(
-          debugShowCheckedModeBanner: false,
-          home: MissingConfigPage(),
-        ),
-      );
-      // when config uploaded via tray, AppFlow.restart will be invoked by TrayService
+      // Config missing → show placeholder app
+      runApp(const MissingConfigRoot());
+
+      // When config uploaded via tray → restart cleanly
       TrayService.instance.onConfigUploaded = () async {
         final uploaded = await AppConfig.load();
         if (uploaded != null) {
           await logger.init(uploaded);
-          await AppFlow.restart();
+          _restartApp();
         } else {
           logger.error('AppInitializer: config upload failed to load');
         }
       };
     }
   }
+
+  /// Clean restart of the app (without Phoenix)
+  static Future<void> _restartApp() async {
+    logger.warn('[AppInitializer] Restarting application...');
+    await AppFlow.shutdown();
+    runApp(const AppRoot());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await AppFlow.start();
+    });
+  }
 }
 
+/// Root app when config is valid
 class AppRoot extends StatelessWidget {
   const AppRoot({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
+      navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
-      home: MainPageWrapper(),
+      home: const MainPageWrapper(),
     );
   }
 }
 
-/// A minimal wrapper that ensures [AppFlow.appStartupFlow] runs once UI is ready.
+/// Root app when config is missing
+class MissingConfigRoot extends StatelessWidget {
+  const MissingConfigRoot({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: MissingConfigPage(),
+    );
+  }
+}
+
+/// Wrapper for main page
 class MainPageWrapper extends StatefulWidget {
   const MainPageWrapper({super.key});
 
@@ -75,16 +95,5 @@ class MainPageWrapper extends StatefulWidget {
 
 class _MainPageWrapperState extends State<MainPageWrapper> {
   @override
-  void initState() {
-    super.initState();
-    // delay startup flows until UI rendered
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      // AppFlow.start() already called in AppInitializer, but we can ensure idempotency
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return const MainPage();
-  }
+  Widget build(BuildContext context) => const MainPage();
 }

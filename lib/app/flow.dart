@@ -1,26 +1,25 @@
 // lib/app/app_flow.dart
 import 'dart:async';
-
-import 'package:webitel_agent_flutter/app/initializer.dart';
-import 'package:webitel_agent_flutter/app/recording_manager.dart';
-import 'package:webitel_agent_flutter/core/logger.dart';
-import 'package:webitel_agent_flutter/service/auth/login.dart';
-import 'package:webitel_agent_flutter/storage/storage.dart';
-import 'package:webitel_agent_flutter/service/screenshot/screenshot_sender.dart';
-import 'package:webitel_agent_flutter/service/control/agent_control.dart';
-import 'package:webitel_agent_flutter/service/system/tray.dart';
-import 'package:webitel_agent_flutter/config/config.dart';
-import 'package:flutter_phoenix/flutter_phoenix.dart';
-import 'package:webitel_agent_flutter/ws/manager.dart';
+import 'package:http/http.dart' as http;
+import 'package:webitel_desk_track/app/recording_manager.dart';
+import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/service/auth/login.dart';
+import 'package:webitel_desk_track/service/auth/token_watcher.dart';
+import 'package:webitel_desk_track/storage/storage.dart';
+import 'package:webitel_desk_track/service/screenshot/screenshot_sender.dart';
+import 'package:webitel_desk_track/service/control/agent_control.dart';
+import 'package:webitel_desk_track/service/system/tray.dart';
+import 'package:webitel_desk_track/config/config.dart';
+import 'package:webitel_desk_track/ws/manager.dart';
 
 /// Central app lifecycle: login → initialize services → attach socket, recorders, screenshot.
 class AppFlow {
   static final _storage = SecureStorageService();
-
   static ScreenshotSenderService? screenshotService;
   static AgentControlService? agentControlService;
   static RecordingManager? recordingManager;
   static SocketManager? socketManager;
+  static TokenWatcher? _tokenWatcher;
 
   /// Start / resume the app flow. Idempotent (won't start twice).
   static Future<void> start() async {
@@ -36,7 +35,14 @@ class AppFlow {
   /// Ensures we have a valid token. If missing, trigger login flow.
   static Future<String?> _ensureToken() async {
     var token = await _storage.readAccessToken();
-    if (token == null || token.isEmpty) {
+
+    final uri = Uri.parse('${AppConfig.instance.baseUrl}/api/userinfo');
+    final resp = await http.get(
+      uri,
+      headers: {'X-Webitel-Access': token ?? ''},
+    );
+
+    if (token == null || token.isEmpty || resp.statusCode == 401) {
       // need to login
       final ok = await LoginService.performLogin();
       if (!ok) return null;
@@ -47,23 +53,22 @@ class AppFlow {
 
   /// Initialize services that require token/config.
   static Future<void> _initializeWithToken(String token) async {
-    // 1) Screenshot service
+    // Screenshot service
     screenshotService ??= ScreenshotSenderService(
       baseUrl: AppConfig.instance.baseUrl,
     );
     screenshotService!.start();
 
-    // 2) Agent control polling
+    // Agent control polling
     agentControlService ??= AgentControlService(
       baseUrl: AppConfig.instance.baseUrl,
     );
     agentControlService!.start();
 
-    // 3) Recording manager (manages call/screen recorders)
+    // Recording manager (manages call/screen recorders)
     recordingManager ??= RecordingManager();
-    recordingManager!.init(); // sets up internal state
 
-    // 4) Socket manager: connect + authenticate
+    // Socket manager: connect + authenticate
     socketManager ??= SocketManager(
       baseUrl: AppConfig.instance.baseUrl,
       wsUrl: AppConfig.instance.webitelWsUrl,
@@ -78,6 +83,13 @@ class AppFlow {
       await _interactiveRelogin();
       return;
     }
+
+    // Token watcher: monitor token expiration and trigger re-login
+    _tokenWatcher ??= TokenWatcher(
+      baseUrl: AppConfig.instance.baseUrl,
+      onExpired: _interactiveRelogin,
+    );
+    _tokenWatcher!.start();
 
     // attach socket to services
     recordingManager!.attachSocket(socketManager!.socket);
@@ -124,6 +136,7 @@ class AppFlow {
     } catch (e, st) {
       logger.warn('[AppFlow] screenshotService.stop error: $e\n$st');
     }
+
     screenshotService = null;
 
     try {
@@ -131,6 +144,7 @@ class AppFlow {
     } catch (e, st) {
       logger.warn('[AppFlow] agentControlService.stop error: $e\n$st');
     }
+
     agentControlService = null;
 
     // Stop recording manager (stops recorders and uploads pending files)
@@ -148,28 +162,13 @@ class AppFlow {
       logger.warn('[AppFlow] socketManager.disconnect error: $e\n$st');
     }
     socketManager = null;
-  }
 
-  /// Full app restart via Phoenix (clear UI state and restart)
-  static Future<void> restart() async {
-    logger.info('[AppFlow] Restarting app via Phoenix.rebirth');
-    await shutdown();
-    // Phoenix requires BuildContext, but we can use navigatorKey if set.
-    // We'll attempt to rebirth using the global navigator's context if available.
+    // Stop token watcher
     try {
-      final ctx = navigatorKey.currentContext;
-      if (ctx != null) {
-        // ignore: use_build_context_synchronously
-        Phoenix.rebirth(ctx);
-      } else {
-        // Fallback: rebuild app root by runApp (less clean), create new widget tree
-        // This rarely happens if navigatorKey not wired; better to ensure navigatorKey set.
-        logger.warn(
-          '[AppFlow] navigator context null — cannot Phoenix.rebirth',
-        );
-      }
+      await _tokenWatcher?.stop();
     } catch (e, st) {
-      logger.error('[AppFlow] Restart failed: $e\n$st');
+      logger.warn('[AppFlow] tokenWatcher.stop error: $e\n$st');
     }
+    _tokenWatcher = null;
   }
 }

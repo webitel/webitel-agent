@@ -1,8 +1,8 @@
 // lib/app/window_listener.dart
 import 'package:window_manager/window_manager.dart';
-import 'package:webitel_agent_flutter/service/system/tray.dart';
-import 'package:webitel_agent_flutter/app/flow.dart';
-import 'package:webitel_agent_flutter/core/logger.dart';
+import 'package:webitel_desk_track/service/system/tray.dart';
+import 'package:webitel_desk_track/app/flow.dart';
+import 'package:webitel_desk_track/core/logger.dart';
 
 class MyWindowListener extends WindowListener {
   @override

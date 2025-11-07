@@ -6,9 +6,13 @@ import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:webitel_agent_flutter/service/control/agent_control.dart';
-import 'package:webitel_agent_flutter/service/streaming/webrtc_streamer.dart';
-import 'package:webitel_agent_flutter/ws/ws_config.dart';
+import 'package:webitel_desk_track/service/control/agent_control.dart';
+import 'package:webitel_desk_track/service/streaming/webrtc_streamer.dart';
+import 'package:webitel_desk_track/ws/model/agent_status.dart';
+import 'package:webitel_desk_track/ws/model/notification_action.dart';
+import 'package:webitel_desk_track/ws/model/ws_action.dart';
+import 'package:webitel_desk_track/ws/model/ws_event.dart';
+import 'package:webitel_desk_track/ws/ws_config.dart';
 
 import '../core/logger.dart';
 import '../service/screenshot/screenshot_sender.dart';
@@ -16,60 +20,6 @@ import '../service/system/tray.dart';
 import '../model/agent.dart';
 import '../model/auth.dart';
 import 'ws_error.dart';
-
-enum AgentStatus { online, offline, pause, unknown }
-
-enum WebSocketEvent { agentStatus, hello, call, notification, channel, unknown }
-
-WebSocketEvent fromString(String? value) {
-  switch (value) {
-    case 'agent_status':
-      return WebSocketEvent.agentStatus;
-    case 'hello':
-      return WebSocketEvent.hello;
-    case 'call':
-      return WebSocketEvent.call;
-    case 'notification':
-      return WebSocketEvent.notification;
-    case 'channel':
-      return WebSocketEvent.channel;
-    default:
-      return WebSocketEvent.unknown;
-  }
-}
-
-enum NotificationAction {
-  screenShare,
-  screenshot,
-  screenRecordStart,
-  screenRecordStop,
-  unknown;
-
-  static NotificationAction fromString(String? action) {
-    switch (action) {
-      case 'screen_share':
-        return NotificationAction.screenShare;
-      case 'screenshot':
-        return NotificationAction.screenshot;
-      case 'ss_record_start':
-        return NotificationAction.screenRecordStart;
-      case 'ss_record_stop':
-        return NotificationAction.screenRecordStop;
-      default:
-        return NotificationAction.unknown;
-    }
-  }
-}
-
-class SocketActions {
-  static const authenticationChallenge = 'authentication_challenge';
-  static const agentSession = 'cc_agent_session';
-  static const userDefaultDevice = 'user_default_device';
-  static const agentOnline = 'cc_agent_online';
-  static const agentOffline = 'cc_agent_offline';
-  static const agentPause = 'cc_agent_pause';
-  static const ack = 'ss_ack';
-}
 
 class WebitelSocket {
   final AgentControlService agentControlService;
@@ -108,9 +58,6 @@ class WebitelSocket {
 
   final List<Map<String, dynamic>> activeCalls = [];
   final List<Map<String, dynamic>> _postProcessing = [];
-
-  bool get _shouldRecordScreen =>
-      activeCalls.isNotEmpty || _postProcessing.isNotEmpty;
 
   WebitelSocket({required this.config, required this.agentControlService}) {
     _token = config.token;
@@ -446,9 +393,9 @@ class WebitelSocket {
           );
           break;
       }
-    } catch (e) {
+    } catch (e, st) {
       ackError = e.toString();
-      logger.error('[WebitelSocket] Error handling notification', e);
+      logger.error('[WebitelSocket] Error handling notification', e, st);
     }
 
     if (ackId != null) {

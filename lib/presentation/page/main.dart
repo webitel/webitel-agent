@@ -2,9 +2,10 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
-import 'package:webitel_agent_flutter/app/flow.dart';
-import 'package:webitel_agent_flutter/core/logger.dart';
-import 'package:webitel_agent_flutter/ws/ws.dart';
+import 'package:webitel_desk_track/app/flow.dart';
+import 'package:webitel_desk_track/core/logger.dart';
+
+import 'package:webitel_desk_track/ws/ws.dart';
 
 import '../../gen/assets.gen.dart';
 import '../theme/text_style.dart';
@@ -49,7 +50,7 @@ class _MainPageState extends State<MainPage> {
 
       return AppExitResponse.exit;
     } catch (e, st) {
-      logger.error('[MainPage] Error during app exit cleanup: $e', st);
+      logger.error('[MainPage] Error during app exit cleanup:', e, st);
 
       return AppExitResponse.exit;
     }
@@ -60,8 +61,8 @@ class _MainPageState extends State<MainPage> {
       await _socket?.connect();
       await _socket?.authenticate();
       logger.info('[MainPage] Socket connected and authenticated');
-    } catch (e) {
-      logger.error('[MainPage] Socket connect/auth error: $e');
+    } catch (e, st) {
+      logger.error('[MainPage] Socket connect/auth error:', e, st);
     }
   }
 

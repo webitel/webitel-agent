@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:webitel_agent_flutter/core/logger.dart';
-import 'package:webitel_agent_flutter/service/common/webrtc/capturer.dart';
+import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/service/common/webrtc/capturer.dart';
 
 typedef OnReceiverClosed = void Function();
 typedef OnAccept =
@@ -102,22 +102,10 @@ class ScreenStreamer {
 
       _pc!.onSignalingState = (RTCSignalingState state) {
         logger.debug('[ScreenStreamer] Signaling state: $state');
-        if (state == RTCSignalingState.RTCSignalingStateClosed) {
-          logger.warn(
-            '[ScreenStreamer] Signaling state $state - closing connection',
-          );
-          close('Signaling $state');
-        }
       };
 
       _pc?.onIceGatheringState = (RTCIceGatheringState state) {
         logger.debug('[ScreenStreamer] ICE gathering state: $state');
-        if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {
-          logger.info('[ScreenStreamer] ICE gathering complete');
-        } else if (state ==
-            RTCIceGatheringState.RTCIceGatheringStateGathering) {
-          logger.info('[ScreenStreamer] ICE gathering in progress...');
-        }
       };
 
       _pc!.onConnectionState = (RTCPeerConnectionState state) async {
@@ -133,79 +121,6 @@ class ScreenStreamer {
 
       _pc!.onIceConnectionState = (RTCIceConnectionState state) async {
         logger.debug('[ScreenStreamer] ICE connection state: $state');
-
-        switch (state) {
-          case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
-          case RTCIceConnectionState.RTCIceConnectionStateFailed:
-            logger.warn('[ScreenStreamer] ICE state $state');
-
-            //FIXME
-            // // Stop local screen recorder
-            // if (screenRecorder != null && activeCalls.isNotEmpty ||
-            //     postProcessing.isNotEmpty) {
-            //   try {
-            //     await screenRecorder!.stopRecording();
-            //     final success = await screenRecorder!.uploadVideoWithRetry();
-            //     if (!success)
-            //       logger.error('Screen video upload failed on ICE $state');
-            //   } catch (e) {
-            //     logger.error(
-            //       'Error stopping screen recorder on ICE $state: $e',
-            //     );
-            //   } finally {
-            //     await LocalVideoRecorder.cleanupOldVideos();
-            //     screenRecorder = null;
-            //   }
-            // }
-
-            // // Stop screen WebRTC stream
-            // screenStream?.stop();
-            // screenStream = null;
-
-            // // Stop local call recorder if any
-            // if (callRecorder != null && activeCalls.isNotEmpty ||
-            //     postProcessing.isNotEmpty) {
-            //   try {
-            //     await callRecorder!.stopRecording();
-            //     final success = await callRecorder!.uploadVideoWithRetry();
-            //     if (!success)
-            //       logger.error('Call video upload failed on ICE $state');
-            //   } catch (e) {
-            //     logger.error('Error stopping call recorder on ICE $state: $e');
-            //   } finally {
-            //     await LocalVideoRecorder.cleanupOldVideos();
-            //     callRecorder = null;
-            //   }
-            // }
-
-            // // Stop call WebRTC stream
-            // callStream?.stop();
-            // callStream = null;
-
-            // if (state ==
-            //     RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
-            //   await _pc?.restartIce();
-            // } else {
-            //   close('ICE $state');
-            // }
-            break;
-
-          case RTCIceConnectionState.RTCIceConnectionStateClosed:
-            close('ICE $state');
-            logger.warn('[ScreenStreamer] ICE connection closed manually');
-            break;
-
-          case RTCIceConnectionState.RTCIceConnectionStateConnected:
-            logger.info('[ScreenStreamer] ICE connected');
-            break;
-
-          case RTCIceConnectionState.RTCIceConnectionStateCompleted:
-            logger.info('[ScreenStreamer] ICE completed');
-            break;
-
-          default:
-            break;
-        }
       };
 
       // Set remote SDP
@@ -249,7 +164,7 @@ class ScreenStreamer {
 
       await waitForIceGatheringComplete(_pc!);
     } catch (e, stack) {
-      logger.error('[ScreenStreamer] Failed to start: $e');
+      logger.error('[ScreenStreamer] Failed to start:', e, stack);
       logger.debug(stack.toString());
       close('Exception during start: $e');
     }
@@ -284,16 +199,16 @@ class ScreenStreamer {
             try {
               track.stop();
               logger.debug('[ScreenStreamer] Stopped track: ${track.kind}');
-            } catch (e) {
-              logger.error('[ScreenStreamer] Error stopping track: $e');
+            } catch (e, st) {
+              logger.error('[ScreenStreamer] Error stopping track:', e, st);
             }
           }
 
           try {
             stream.dispose();
             logger.debug('[ScreenStreamer] Disposed stream');
-          } catch (e) {
-            logger.error('[ScreenStreamer] Error disposing stream: $e');
+          } catch (e, st) {
+            logger.error('[ScreenStreamer] Error disposing stream:', e, st);
           }
         }
         localStreams!.clear();
@@ -305,7 +220,7 @@ class ScreenStreamer {
 
       logger.info('[ScreenStreamer] Resources released successfully');
     } catch (e, st) {
-      logger.error('[ScreenStreamer] Error during close: $e\n$st');
+      logger.error('[ScreenStreamer] Error during close:', e, st);
     }
 
     onClose();

@@ -1,10 +1,10 @@
 // lib/service/auth/login_service.dart
 import 'package:flutter/material.dart';
-import 'package:webitel_agent_flutter/app/initializer.dart';
-import 'package:webitel_agent_flutter/core/logger.dart';
-import 'package:webitel_agent_flutter/storage/storage.dart';
-import 'package:webitel_agent_flutter/config/config.dart';
-import 'package:webitel_agent_flutter/webview/login.dart';
+import 'package:webitel_desk_track/app/initializer.dart';
+import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/storage/storage.dart';
+import 'package:webitel_desk_track/config/config.dart';
+import 'package:webitel_desk_track/webview/login.dart';
 
 /// Handles login flow via the WebView screen.
 /// This class intentionally avoids holding UI state and is fully static.
@@ -43,7 +43,7 @@ class LoginService {
       logger.info('[LoginService] Login cancelled or failed.');
       return false;
     } catch (e, st) {
-      logger.error('[LoginService] Login error: $e\n$st');
+      logger.error('[LoginService] Login error:', e, st);
       return false;
     } finally {
       _isLoggingIn = false;

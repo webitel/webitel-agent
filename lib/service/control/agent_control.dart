@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:webitel_agent_flutter/core/logger.dart';
-import 'package:webitel_agent_flutter/storage/storage.dart';
+import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/storage/storage.dart';
 
 class AgentControlService {
   final String baseUrl;
@@ -61,7 +61,7 @@ class AgentControlService {
         logger.warn('[Control] Failed to fetch: ${resp.statusCode}');
       }
     } catch (e, st) {
-      logger.error('[Control] fetch error: $e\n$st');
+      logger.error('[Control] fetch error:', e, st);
     }
   }
 }

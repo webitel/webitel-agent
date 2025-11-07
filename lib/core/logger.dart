@@ -1,21 +1,17 @@
 import 'dart:io';
-
 import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
-
 import '../config/model/config.dart';
 
 final logger = LoggerService();
 
 class LoggerService {
   static final LoggerService _instance = LoggerService._internal();
-
   late Logger _logger;
   late Level _level;
   IOSink? _fileSink;
 
   factory LoggerService() => _instance;
-
   LoggerService._internal();
 
   Future<void> init(AppConfigModel? config) async {
@@ -32,20 +28,10 @@ class LoggerService {
     } else if (logLevelError) {
       _level = Level.error;
     } else {
-      _level = Level.nothing;
+      _level = Level.off;
     }
 
-    _logger = Logger(
-      level: _level,
-      printer: PrettyPrinter(
-        methodCount: 0,
-        errorMethodCount: 5,
-        lineLength: 80,
-        colors: true,
-        printEmojis: true,
-        printTime: true,
-      ),
-    );
+    _logger = Logger(level: _level, printer: CustomPrettyPrinter());
 
     if (logToFile) {
       final dir = await getApplicationDocumentsDirectory();
@@ -97,5 +83,43 @@ class LoggerService {
   Future<void> dispose() async {
     await _fileSink?.flush();
     await _fileSink?.close();
+  }
+}
+
+class CustomPrettyPrinter extends LogPrinter {
+  static final levelColors = {
+    Level.debug: (String text) => AnsiColor.fg(AnsiColor.grey(0.6))(text),
+    Level.info: (String text) => AnsiColor.fg(39)(text),
+    Level.warning: (String text) => AnsiColor.fg(226)(text),
+    Level.error: (String text) => AnsiColor.fg(196)(text),
+    Level.off: (String text) => AnsiColor.fg(201)(text),
+  };
+
+  @override
+  List<String> log(LogEvent event) {
+    final colorize = levelColors[event.level] ?? (String text) => text;
+    final time = _formattedTime();
+    final level = event.level.toString().split('.').last.toUpperCase();
+
+    final buffer = StringBuffer();
+    buffer.write(colorize('[$time] [$level] ${event.message}'));
+
+    if (event.error != null) {
+      buffer.writeln(colorize('\n  ↳ Error: ${event.error}'));
+    }
+
+    if (event.stackTrace != null) {
+      buffer.writeln(colorize('  ↳ StackTrace: ${event.stackTrace}'));
+    }
+
+    return [buffer.toString()];
+  }
+
+  String _formattedTime() {
+    final now = DateTime.now();
+    final h = now.hour.toString().padLeft(2, '0');
+    final m = now.minute.toString().padLeft(2, '0');
+    final s = now.second.toString().padLeft(2, '0');
+    return '$h:$m:$s';
   }
 }

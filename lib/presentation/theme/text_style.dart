@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:webitel_agent_flutter/gen/fonts.gen.dart';
+import 'package:webitel_desk_track/gen/fonts.gen.dart';
 
 class AppTextStyles {
   static const TextStyle captureTitle = TextStyle(
