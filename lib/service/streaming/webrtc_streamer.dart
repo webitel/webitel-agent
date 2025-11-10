@@ -16,6 +16,7 @@ class ScreenStreamer {
   final OnReceiverClosed onClose;
   final LoggerService logger;
   final List<MediaStream>? localStreams;
+  final MediaStream? localStream;
   final OnAccept onAccept;
 
   RTCPeerConnection? _pc;
@@ -28,6 +29,7 @@ class ScreenStreamer {
     required this.logger,
     required this.onAccept,
     this.localStreams,
+    this.localStream,
   });
 
   /// Factory method to build from screen_share notification
@@ -36,6 +38,7 @@ class ScreenStreamer {
     required LoggerService logger,
     required OnReceiverClosed onClose,
     required OnAccept onAccept,
+    List<Map<String, dynamic>>? iceServers,
   }) async {
     final body = notif['body'] as Map<String, dynamic>?;
 
@@ -53,17 +56,19 @@ class ScreenStreamer {
     logger.info('[ScreenStreamer] screen_share received, parent_id=$parentId');
 
     List<MediaStream>? localStreams;
+    MediaStream? localStream;
 
     Platform.isWindows
         ? localStreams = await captureAllDesktopScreensWindows()
-        : await captureAllDesktopScreensWindows();
+        : localStream = await captureDesktopScreen();
 
     final screenStreamer = ScreenStreamer(
       id: parentId,
       peerSdp: sdp,
-      iceServers: [],
+      iceServers: iceServers ?? [],
       logger: logger,
       localStreams: localStreams,
+      localStream: localStream,
       onClose: onClose,
       onAccept: onAccept,
     );
@@ -142,11 +147,10 @@ class ScreenStreamer {
           logger.warn('[ScreenStreamer] No local streams found for Windows');
         }
       } else {
-        // macOS / others — беремо лише перший стрім
-        if (localStreams != null && localStreams!.isNotEmpty) {
-          final stream = localStreams!.first;
-          for (final track in stream.getTracks()) {
-            await _pc!.addTrack(track, stream);
+        // macOS / others
+        if (localStream != null) {
+          for (final track in localStream!.getTracks()) {
+            await _pc!.addTrack(track, localStream!);
             logger.debug('[ScreenStreamer] Added macOS track: ${track.kind}');
           }
         } else {

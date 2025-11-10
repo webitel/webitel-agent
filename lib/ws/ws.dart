@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:webitel_desk_track/config/config.dart';
 import 'package:webitel_desk_track/service/control/agent_control.dart';
 import 'package:webitel_desk_track/service/streaming/webrtc_streamer.dart';
 import 'package:webitel_desk_track/ws/model/agent_status.dart';
@@ -365,6 +366,7 @@ class WebitelSocket {
         case NotificationAction.screenShare:
           _screenCapturer?.close('new screen_share');
           _screenCapturer = await ScreenStreamer.fromNotification(
+            iceServers: AppConfig.instance.webrtcIceServers,
             notif: notif,
             logger: logger,
             onClose: () => logger.info('[WebitelSocket] Screen stream closed'),
