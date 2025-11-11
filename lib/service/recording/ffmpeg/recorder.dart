@@ -48,11 +48,9 @@ class LocalVideoRecorder implements Recorder {
     }
 
     final agentId =
-        await SecureStorageService().readAgentId() ?? 'unknown_user';
-    _recordingFilePath = await _fileService.buildRecordingFilePath(
-      agentId as String,
-    );
-
+        (await SecureStorageService().readAgentId())?.toString() ??
+        'unknown_user';
+    _recordingFilePath = await _fileService.buildRecordingFilePath(agentId);
     _startTime = DateTime.now();
 
     await _recorder.start(_recordingFilePath!);

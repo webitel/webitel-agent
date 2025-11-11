@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:webitel_desk_track/config/config.dart';
 import 'package:webitel_desk_track/core/logger.dart';
 import 'package:webitel_desk_track/service/common/webrtc/capturer.dart';
 
@@ -12,7 +13,6 @@ typedef OnAccept =
 class ScreenStreamer {
   final String id;
   final String peerSdp;
-  final List<Map<String, dynamic>> iceServers;
   final OnReceiverClosed onClose;
   final LoggerService logger;
   final List<MediaStream>? localStreams;
@@ -24,7 +24,6 @@ class ScreenStreamer {
   ScreenStreamer({
     required this.id,
     required this.peerSdp,
-    required this.iceServers,
     required this.onClose,
     required this.logger,
     required this.onAccept,
@@ -38,7 +37,6 @@ class ScreenStreamer {
     required LoggerService logger,
     required OnReceiverClosed onClose,
     required OnAccept onAccept,
-    List<Map<String, dynamic>>? iceServers,
   }) async {
     final body = notif['body'] as Map<String, dynamic>?;
 
@@ -65,7 +63,6 @@ class ScreenStreamer {
     final screenStreamer = ScreenStreamer(
       id: parentId,
       peerSdp: sdp,
-      iceServers: iceServers ?? [],
       logger: logger,
       localStreams: localStreams,
       localStream: localStream,
@@ -99,8 +96,8 @@ class ScreenStreamer {
       // Create peer connection
       // In peer connection configuration:
       _pc = await createPeerConnection({
-        'iceServers': iceServers,
-        'iceConnectionReceivingTimeout': 15000,
+        'iceServers': AppConfig.instance.webrtcIceServers,
+        'iceTransportPolicy': AppConfig.instance.webrtcIceTransportPolicy,
       });
 
       logger.debug('[ScreenStreamer] Peer connection created');
@@ -130,7 +127,13 @@ class ScreenStreamer {
 
       // Set remote SDP
       await _pc!.setRemoteDescription(RTCSessionDescription(peerSdp, 'offer'));
-      logger.info('[ScreenStreamer] Remote SDP offer set');
+
+      logger.info(
+        '[ScreenStreamer] >>>>>>>>>>>>>>>>>>>> Remote SDP answer set:\n'
+        '==================== SDP BEGIN ====================\n'
+        '${peerSdp.trim()}\n'
+        '===================== SDP END =====================',
+      );
 
       // Add local tracks
       if (Platform.isWindows) {
@@ -164,7 +167,13 @@ class ScreenStreamer {
 
       // Set local SDP
       await _pc!.setLocalDescription(answer);
-      logger.info('[ScreenStreamer] >>>>>>>>>>>>>>>>>>>> Local SDP answer set');
+
+      logger.info(
+        '[ScreenStreamer] >>>>>>>>>>>>>>>>>>>> Local SDP answer set:\n'
+        '==================== SDP BEGIN ====================\n'
+        '${answer.sdp?.trim() ?? "<empty>"}\n'
+        '===================== SDP END =====================',
+      );
 
       await waitForIceGatheringComplete(_pc!);
     } catch (e, stack) {
@@ -176,13 +185,13 @@ class ScreenStreamer {
 
   Future<void> waitForIceGatheringComplete(
     RTCPeerConnection pc, {
-    Duration timeout = const Duration(seconds: 5),
+    Duration timeout = const Duration(seconds: 10),
   }) async {
     final start = DateTime.now();
 
     while (pc.iceGatheringState !=
         RTCIceGatheringState.RTCIceGatheringStateComplete) {
-      await Future.delayed(const Duration(milliseconds: 100));
+      await Future.delayed(const Duration(milliseconds: 200));
       if (DateTime.now().difference(start) > timeout) {
         throw TimeoutException('ICE gathering did not complete in time');
       }

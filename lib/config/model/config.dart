@@ -25,6 +25,7 @@ class AppConfigModel {
   // --- WebRTC ---
   final String webrtcSdpUrl;
   final List<Map<String, dynamic>> webrtcIceServers;
+  final String webrtcIceTransportPolicy;
 
   AppConfigModel({
     required this.baseUrl,
@@ -42,6 +43,7 @@ class AppConfigModel {
     required this.logFilePath,
     required this.webrtcSdpUrl,
     required this.webrtcIceServers,
+    required this.webrtcIceTransportPolicy,
   });
 
   /// --- Fixed paths (never change) ---
@@ -91,6 +93,13 @@ class AppConfigModel {
       return [];
     }
 
+    String parseTransportPolicy(dynamic v) {
+      if (v is String && v.isNotEmpty) {
+        return v;
+      }
+      return 'all'; // default value
+    }
+
     return AppConfigModel(
       baseUrl: baseUrl,
       loginUrl: combineUrl(_loginPath),
@@ -107,6 +116,9 @@ class AppConfigModel {
       logFilePath: logger['filePath'] ?? '/tmp/log.txt',
       webrtcSdpUrl: combineUrl(_sdpPath),
       webrtcIceServers: parseIceServers(webrtc['iceServers']),
+      webrtcIceTransportPolicy: parseTransportPolicy(
+        webrtc['iceTransportPolicy'],
+      ),
     );
   }
 }

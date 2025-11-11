@@ -1,3 +1,4 @@
+// video_upload_service_fixed.dart
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
@@ -20,6 +21,7 @@ class VideoUploadService {
     return retry(
       () => _upload(filePath, callId, channel, startTime),
       maxRetries: 3,
+      delay: const Duration(seconds: 2),
     );
   }
 
@@ -30,7 +32,12 @@ class VideoUploadService {
     DateTime? startTime,
   ) async {
     final file = File(filePath);
-    if (!await file.exists()) return false;
+    if (!await file.exists()) {
+      logger.error('File not found for upload → $filePath');
+      return false;
+    }
+
+    await Future.delayed(const Duration(milliseconds: 500));
 
     final query = {
       'channel': channel,
@@ -56,12 +63,17 @@ class VideoUploadService {
           'file',
           filePath,
           contentType: MediaType(parts[0], parts[1]),
+          filename: filePath.split(Platform.pathSeparator).last,
         ),
       );
 
-    final res = await req.send();
-    logger.info('Uploading video → ${res.statusCode}');
-
-    return res.statusCode == 200 || res.statusCode == 201;
+    try {
+      final res = await req.send();
+      logger.info('Uploading video → ${res.statusCode}');
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      logger.error('Upload error: $e');
+      return false;
+    }
   }
 }

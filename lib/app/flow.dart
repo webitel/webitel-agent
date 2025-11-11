@@ -60,10 +60,10 @@ class AppFlow {
     screenshotService!.start();
 
     // Agent control polling
-    agentControlService ??= AgentControlService(
-      baseUrl: AppConfig.instance.baseUrl,
-    );
-    agentControlService!.start();
+    // agentControlService ??= AgentControlService(
+    //   baseUrl: AppConfig.instance.baseUrl,
+    // );
+    // agentControlService!.start();
 
     // Recording manager (manages call/screen recorders)
     recordingManager ??= RecordingManager();

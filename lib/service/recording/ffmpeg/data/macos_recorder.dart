@@ -1,9 +1,10 @@
+// mac_recorder_fixed.dart
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_session.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
-
 import 'package:webitel_desk_track/core/logger.dart';
 import 'package:webitel_desk_track/service/recording/ffmpeg/domain/platform_recorder.dart';
+import 'dart:async';
 
 class MacRecorder implements PlatformRecorder {
   FFmpegSession? _session;
@@ -25,7 +26,6 @@ class MacRecorder implements PlatformRecorder {
     }
 
     logger.debug('Detected screens: $screenIndices');
-
     return screenIndices;
   }
 
@@ -48,31 +48,25 @@ class MacRecorder implements PlatformRecorder {
     late final String ffmpegCommand;
 
     if (screenIndices.length == 1) {
-      // one screen
       ffmpegCommand =
-          '$inputArgs -vf "scale=1280:720" -c:v h264_videotoolbox '
-          '-pix_fmt yuv420p -b:v 5M -movflags +faststart -y "$filePath"';
+          '$inputArgs -vf "scale=1280:720" -c:v h264_videotoolbox -pix_fmt yuv420p -b:v 5M -movflags +faststart -y "$filePath"';
     } else {
-      // multiple screens - stack horizontally
       final stackChain = screenIndices
           .asMap()
           .entries
-          .map((entry) {
-            final i = entry.key;
-            return '[$i:v]scale=1280:720[v$i]';
-          })
+          .map((entry) => '[${entry.key}:v]scale=1280:720[v${entry.key}]')
           .join(';');
 
       final inputChain =
           List.generate(screenIndices.length, (i) => '[v$i]').join();
-
       ffmpegCommand =
           '$inputArgs -filter_complex "$stackChain;$inputChain hstack=inputs=${screenIndices.length}" '
           '-c:v h264_videotoolbox -pix_fmt yuv420p -b:v 5M -movflags +faststart -y "$filePath"';
     }
 
-    logger.info('Starting FFmpeg on macOS → $filePath');
     _isRecording = true;
+
+    final completer = Completer<void>();
 
     _session = await FFmpegKit.executeAsync(ffmpegCommand, (session) async {
       final returnCode = await session.getReturnCode();
@@ -82,7 +76,10 @@ class MacRecorder implements PlatformRecorder {
         logger.error('Recording failed: $returnCode');
       }
       _isRecording = false;
+      completer.complete();
     });
+
+    await Future.delayed(const Duration(milliseconds: 200));
   }
 
   @override
@@ -90,6 +87,7 @@ class MacRecorder implements PlatformRecorder {
     if (!_isRecording) return;
     logger.info('Stopping macOS recording');
     await _session?.cancel();
+    await Future.delayed(const Duration(milliseconds: 500));
     _isRecording = false;
   }
 }

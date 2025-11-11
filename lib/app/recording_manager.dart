@@ -32,8 +32,14 @@ class RecordingManager {
     );
 
     socket.onScreenRecordEvent(
-      onStart: (body) => _onStart(body['root_id'], type: RecordingType.screen),
-      onStop: (body) => _onStop(body['root_id'], type: RecordingType.screen),
+      onStart: (body) {
+        final rootId = body['root_id']?.toString() ?? 'unknown_root';
+        _onStart(rootId, type: RecordingType.screen);
+      },
+      onStop: (body) {
+        final rootId = body['root_id']?.toString() ?? 'unknown_root';
+        _onStop(rootId, type: RecordingType.screen);
+      },
     );
   }
 
@@ -49,14 +55,13 @@ class RecordingManager {
     // Ensure previous recorder stopped
     await _recorders[type]?.stop();
 
-    final isScreen = type == RecordingType.screen;
     final recorder =
         appConfig.videoSaveLocally
             ? LocalVideoRecorder(
               callId: recordingId,
               agentToken: token,
               baseUrl: appConfig.baseUrl,
-              channel: isScreen ? 'screensharing' : 'call',
+              channel: 'screensharing',
             )
             : StreamRecorder(
               callId: recordingId,

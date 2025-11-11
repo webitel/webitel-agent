@@ -5,10 +5,12 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:webitel_desk_track/config/config.dart';
 import 'package:webitel_desk_track/service/control/agent_control.dart';
 import 'package:webitel_desk_track/service/streaming/webrtc_streamer.dart';
+import 'package:webitel_desk_track/storage/storage.dart';
 import 'package:webitel_desk_track/ws/model/agent_status.dart';
 import 'package:webitel_desk_track/ws/model/notification_action.dart';
 import 'package:webitel_desk_track/ws/model/ws_action.dart';
@@ -107,14 +109,40 @@ class WebitelSocket {
     logger.info('WebitelSocket: Disconnecting...');
     _isConnected = false;
     _stateCheckTimer?.cancel();
+
+    if (_screenRecordingActive) {
+      _screenRecordingActive = false;
+      logger.info(
+        '[ScreenRecorder] Stopping screen recording due to disconnect...',
+      );
+      onScreenRecordStop?.call({'reason': 'socket_disconnect'});
+      _onCallHangup?.call(_lastCallId ?? 'unknown');
+    }
+
+    // Close screen capturer if active
+    _screenCapturer?.close('socket_disconnect');
+
     await _wsSubscription.cancel();
     await _channel.sink.close();
     _pendingRequests.clear();
     _outgoingQueue.clear();
+    activeCalls.clear();
+    _postProcessing.clear();
     await _connectivitySubscription.cancel();
   }
 
   Future<void> dispose() async {
+    if (_screenRecordingActive) {
+      _screenRecordingActive = false;
+      logger.info(
+        '[ScreenRecorder] Stopping screen recording due to dispose...',
+      );
+      onScreenRecordStop?.call({'reason': 'socket_dispose'});
+      _onCallHangup?.call(_lastCallId ?? 'unknown');
+    }
+
+    _screenCapturer?.close('socket_dispose');
+
     await _agentStatusController.close();
     await _errorController.close();
     await _ackMessageController.close();
@@ -136,7 +164,39 @@ class WebitelSocket {
       return;
     }
 
-    if (!agentControlService.screenControlEnabled) {
+    final storage = SecureStorageService();
+
+    // --- CHECK SCREEN CONTROL PERMISSION ---
+    bool screenControlEnabled = false;
+    try {
+      final token = await storage.readAccessToken();
+      final agentId = await storage.readAgentId();
+
+      if (token != null && agentId != null) {
+        final agentsUri = Uri.parse(
+          '${AppConfig.instance.baseUrl}/api/call_center/agents?page=1&size=1&fields=screen_control&id=$agentId',
+        );
+
+        final agentsResp = await http.get(
+          agentsUri,
+          headers: {'X-Webitel-Access': token},
+        );
+
+        if (agentsResp.statusCode == 200) {
+          final js = jsonDecode(agentsResp.body);
+          final items = js['items'];
+          if (items is List && items.isNotEmpty) {
+            final dynamic scValue = items.first['screen_control'];
+            screenControlEnabled = scValue == true;
+          }
+        }
+      }
+    } catch (e, st) {
+      logger.error('[WebitelSocket] Error fetching screen_control:', e, st);
+    }
+
+    // --- IGNORE EVENTS IF CONTROL DISABLED ---
+    if (!screenControlEnabled) {
       if (event == WebSocketEvent.call || event == WebSocketEvent.channel) {
         logger.debug(
           '[WebitelSocket] Agent control disabled → ignoring ${data['event']}',
@@ -145,6 +205,7 @@ class WebitelSocket {
       }
     }
 
+    // --- HANDLE EVENTS ---
     switch (event) {
       case WebSocketEvent.agentStatus:
         _handleAgentStatus(data);
@@ -158,7 +219,6 @@ class WebitelSocket {
       case WebSocketEvent.notification:
         await _handleNotification(data);
         break;
-
       case WebSocketEvent.channel:
         final channelData = data['data'];
         final channelType = channelData?['channel'];
@@ -248,7 +308,9 @@ class WebitelSocket {
     switch (callEvent) {
       case 'ringing':
       case 'update':
-        if (callId != null && recordScreen) {
+        if (callId != null
+        //  && recordScreen
+        ) {
           _screenRecordingActive = true;
           _onCallRinging?.call(parentId ?? callId);
           _lastCallId = callId;
@@ -366,7 +428,6 @@ class WebitelSocket {
         case NotificationAction.screenShare:
           _screenCapturer?.close('new screen_share');
           _screenCapturer = await ScreenStreamer.fromNotification(
-            iceServers: AppConfig.instance.webrtcIceServers,
             notif: notif,
             logger: logger,
             onClose: () => logger.info('[WebitelSocket] Screen stream closed'),
@@ -423,11 +484,29 @@ class WebitelSocket {
 
   void _onError(dynamic error) {
     logger.error('WebitelSocket: Socket error: $error');
+
+    // Gracefully stop screen recording on error
+    if (_screenRecordingActive) {
+      _screenRecordingActive = false;
+      logger.info(
+        '[ScreenRecorder] Stopping screen recording due to socket error...',
+      );
+      onScreenRecordStop?.call({
+        'reason': 'socket_error',
+        'error': error.toString(),
+      });
+      _onCallHangup?.call(_lastCallId ?? 'unknown');
+    }
+
+    _screenCapturer?.close('socket_error');
+
     for (var c in _pendingRequests.values) {
       c.completeError(error);
     }
     _pendingRequests.clear();
     _outgoingQueue.clear();
+    activeCalls.clear();
+    _postProcessing.clear();
     _isConnected = false;
 
     _errorController.add(
@@ -443,6 +522,20 @@ class WebitelSocket {
 
   void _onDone() {
     logger.warn('WebitelSocket: Connection closed.');
+
+    // Gracefully stop screen recording when connection closes
+    if (_screenRecordingActive) {
+      _screenRecordingActive = false;
+      logger.info(
+        '[ScreenRecorder] Stopping screen recording due to connection close...',
+      );
+      onScreenRecordStop?.call({'reason': 'connection_closed'});
+      _onCallHangup?.call(_lastCallId ?? 'unknown');
+    }
+
+    _screenCapturer?.close('connection_closed');
+    activeCalls.clear();
+    _postProcessing.clear();
     _isConnected = false;
     _reconnect();
   }
@@ -452,6 +545,17 @@ class WebitelSocket {
       results,
     ) {
       if (results.contains(ConnectivityResult.none)) {
+        if (_screenRecordingActive) {
+          _screenRecordingActive = false;
+          logger.info(
+            '[ScreenRecorder] Stopping screen recording due to connectivity loss...',
+          );
+          onScreenRecordStop?.call({'reason': 'connectivity_lost'});
+          _onCallHangup?.call(_lastCallId ?? 'unknown');
+        }
+        _screenCapturer?.close('connectivity_lost');
+        activeCalls.clear();
+        _postProcessing.clear();
         _isConnected = false;
       } else if (!_isConnected) {
         _reconnect();
