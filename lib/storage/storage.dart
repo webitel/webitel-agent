@@ -43,6 +43,13 @@ class SecureStorageService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('agent_id');
   }
+
+  /// Clears all stored data from SharedPreferences.
+  /// Used on logout or full app reset.
+  Future<void> flush() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+  }
 }
 
 // import 'dart:io';

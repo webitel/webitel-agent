@@ -8,7 +8,6 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:webitel_desk_track/config/config.dart';
-import 'package:webitel_desk_track/service/control/agent_control.dart';
 import 'package:webitel_desk_track/service/streaming/webrtc_streamer.dart';
 import 'package:webitel_desk_track/storage/storage.dart';
 import 'package:webitel_desk_track/ws/model/agent_status.dart';
@@ -25,9 +24,13 @@ import '../model/auth.dart';
 import 'ws_error.dart';
 
 class WebitelSocket {
-  final AgentControlService agentControlService;
-  final WebitelSocketConfig config;
+  static final WebitelSocket _instance = WebitelSocket._internal();
+  static WebitelSocket get instance => _instance;
+
+  WebitelSocketConfig? config;
   late String _token;
+
+  WebitelSocket._internal();
 
   bool _screenRecordingActive = false;
 
@@ -62,9 +65,10 @@ class WebitelSocket {
   final List<Map<String, dynamic>> activeCalls = [];
   final List<Map<String, dynamic>> _postProcessing = [];
 
-  WebitelSocket({required this.config, required this.agentControlService}) {
-    _token = config.token;
-    screenshotService = ScreenshotSenderService(baseUrl: config.baseUrl);
+  factory WebitelSocket({required WebitelSocketConfig config}) {
+    _instance.config = config;
+    _instance._token = config.token;
+    return _instance;
   }
 
   // Public Streams
@@ -81,13 +85,14 @@ class WebitelSocket {
   }
 
   Future<void> connect() async {
-    logger.info('WebitelSocket: Connecting to ${config.url}');
-    _channel = WebSocketChannel.connect(Uri.parse(config.url));
+    logger.info('WebitelSocket: Connecting to ${config?.url}');
+    _channel = WebSocketChannel.connect(Uri.parse(config?.url ?? ''));
     _wsSubscription = _channel.stream.listen(
       _onMessage,
       onError: _onError,
       onDone: _onDone,
     );
+    await _channel.ready;
     _isConnected = true;
     _startConnectivityMonitoring();
     _startPeriodicStateCheck();
@@ -154,8 +159,15 @@ class WebitelSocket {
   //917
   void _onMessage(dynamic message) async {
     logger.debug('WebitelSocket: Received message: $message');
-
     final Map<String, dynamic> data = jsonDecode(message);
+    final storage = SecureStorageService();
+
+    final agentId = data['data']?['agent_id'];
+    if (agentId != null && agentId is int) {
+      await storage.writeAgentId(agentId);
+      logger.info('WebitelSocket: agent_id $agentId saved to storage');
+    }
+
     final replySeq = data['seq_reply'];
     final event = fromString(data['event']);
 
@@ -163,8 +175,6 @@ class WebitelSocket {
       _handleReply(data, replySeq);
       return;
     }
-
-    final storage = SecureStorageService();
 
     // --- CHECK SCREEN CONTROL PERMISSION ---
     bool screenControlEnabled = false;

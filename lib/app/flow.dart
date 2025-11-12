@@ -4,10 +4,10 @@ import 'package:http/http.dart' as http;
 import 'package:webitel_desk_track/app/recording_manager.dart';
 import 'package:webitel_desk_track/core/logger.dart';
 import 'package:webitel_desk_track/service/auth/login.dart';
+
 import 'package:webitel_desk_track/service/auth/token_watcher.dart';
 import 'package:webitel_desk_track/storage/storage.dart';
 import 'package:webitel_desk_track/service/screenshot/screenshot_sender.dart';
-import 'package:webitel_desk_track/service/control/agent_control.dart';
 import 'package:webitel_desk_track/service/system/tray.dart';
 import 'package:webitel_desk_track/config/config.dart';
 import 'package:webitel_desk_track/ws/manager.dart';
@@ -16,7 +16,6 @@ import 'package:webitel_desk_track/ws/manager.dart';
 class AppFlow {
   static final _storage = SecureStorageService();
   static ScreenshotSenderService? screenshotService;
-  static AgentControlService? agentControlService;
   static RecordingManager? recordingManager;
   static SocketManager? socketManager;
   static TokenWatcher? _tokenWatcher;
@@ -80,14 +79,14 @@ class AppFlow {
       logger.error(
         '[AppFlow] Socket connect/auth failed, attempting interactive re-login',
       );
-      await _interactiveRelogin();
+      await interactiveRelogin();
       return;
     }
 
     // Token watcher: monitor token expiration and trigger re-login
     _tokenWatcher ??= TokenWatcher(
       baseUrl: AppConfig.instance.baseUrl,
-      onExpired: _interactiveRelogin,
+      onExpired: interactiveRelogin,
     );
     _tokenWatcher!.start();
 
@@ -98,12 +97,12 @@ class AppFlow {
     // listen for socket auth failures and handle centrally
     socketManager!.onAuthenticationFailed = () async {
       logger.warn('[AppFlow] Socket authentication failed, doing full restart');
-      await _interactiveRelogin();
+      await interactiveRelogin();
     };
   }
 
   /// Do interactive relogin (clears token, prompts UI login, restarts services)
-  static Future<void> _interactiveRelogin() async {
+  static Future<void> interactiveRelogin() async {
     await _storage.deleteAccessToken();
 
     // stop everything gracefully
@@ -138,14 +137,6 @@ class AppFlow {
     }
 
     screenshotService = null;
-
-    try {
-      agentControlService?.stop();
-    } catch (e, st) {
-      logger.warn('[AppFlow] agentControlService.stop error: $e\n$st');
-    }
-
-    agentControlService = null;
 
     // Stop recording manager (stops recorders and uploads pending files)
     try {

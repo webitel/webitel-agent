@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:screen_capturer/screen_capturer.dart';
 import 'package:webitel_desk_track/storage/storage.dart';
+import 'package:webitel_desk_track/ws/ws.dart';
 import '../../core/logger.dart';
 
 class ScreenshotSenderService {
@@ -36,7 +37,7 @@ class ScreenshotSenderService {
     // Run immediately, then every 3 minutes
     _fetchControlsAndInterval();
     _checkerTimer = Timer.periodic(
-      const Duration(minutes: 1),
+      const Duration(seconds: 20),
       (_) => _fetchControlsAndInterval(),
     );
   }
@@ -52,13 +53,36 @@ class ScreenshotSenderService {
   Future<void> _fetchControlsAndInterval() async {
     try {
       final token = await _secureStorage.readAccessToken();
-      final agentId = await _secureStorage.readAgentId();
+      int? agentId = await _secureStorage.readAgentId();
 
-      if (token == null || agentId == null) {
-        logger.warn(
-          '[Screenshot] Missing token or agentId for control/interval fetch.',
-        );
-        return;
+      switch ((token == null, agentId == null)) {
+        case (true, _):
+          logger.warn('[Screenshot] Missing token → skipping fetch.');
+          return;
+
+        case (_, true):
+          logger.warn(
+            '[Screenshot] Missing agentId → trying to fetch via WebSocket...',
+          );
+          try {
+            final socket = WebitelSocket.instance;
+            final session = await socket.getAgentSession();
+            agentId = session.agentId;
+            await _secureStorage.writeAgentId(agentId);
+            await _fetchControlsAndInterval();
+            logger.info('[Screenshot] agentId restored from session: $agentId');
+          } catch (e, st) {
+            logger.error(
+              '[Screenshot] Failed to recover agentId via socket:',
+              e,
+              st,
+            );
+            return;
+          }
+          break;
+
+        default:
+          break;
       }
 
       // Fetch screen_control
@@ -68,7 +92,7 @@ class ScreenshotSenderService {
 
       final agentsResp = await http.get(
         agentsUri,
-        headers: {'X-Webitel-Access': token},
+        headers: {'X-Webitel-Access': token ?? ''},
       );
       if (agentsResp.statusCode == 200) {
         final js = jsonDecode(agentsResp.body);
@@ -76,6 +100,7 @@ class ScreenshotSenderService {
         if (items is List && items.isNotEmpty) {
           final dynamic scValue = items.first['screen_control'];
           final bool enabled = scValue != null && scValue == true;
+          logger.info('[Screenshot] fetched screen_control: $enabled');
 
           if (enabled != _screenControlEnabled) {
             _screenControlEnabled = enabled;
@@ -107,7 +132,7 @@ class ScreenshotSenderService {
 
       final settingsResp = await http.get(
         settingsUri,
-        headers: {'X-Webitel-Access': token},
+        headers: {'X-Webitel-Access': token ?? ''},
       );
       if (settingsResp.statusCode == 200) {
         final js = jsonDecode(settingsResp.body);

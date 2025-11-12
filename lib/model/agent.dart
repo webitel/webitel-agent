@@ -26,13 +26,13 @@ class AgentSession {
   factory AgentSession.fromJson(Map<String, dynamic> json) {
     return AgentSession(
       agentId: json['agent_id'] ?? 0,
-      isAdmin: json['is_admin'],
-      isSupervisor: json['is_supervisor'],
-      status: json['status'],
-      statusDuration: json['status_duration'],
-      lastStatusChange: json['last_status_change'],
-      onDemand: json['on_demand'],
-      statusPayload: json['status_payload'],
+      isAdmin: json['is_admin'] ?? false,
+      isSupervisor: json['is_supervisor'] ?? false,
+      status: json['status'] ?? 'offline',
+      statusDuration: json['status_duration'] ?? 0,
+      lastStatusChange: json['last_status_change'] ?? 0,
+      onDemand: json['on_demand'] ?? false,
+      statusPayload: json['status_payload'] ?? '',
       team: json['team'] != null ? Team.fromJson(json['team']) : null,
       channels:
           (json['channels'] as List)

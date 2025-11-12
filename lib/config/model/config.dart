@@ -27,6 +27,12 @@ class AppConfigModel {
   final List<Map<String, dynamic>> webrtcIceServers;
   final String webrtcIceTransportPolicy;
 
+  // --- Logout type ---
+  // 0 - on token (default)
+  // 1 - on close
+  // 2 - on button
+  final int userLogoutType;
+
   AppConfigModel({
     required this.baseUrl,
     required this.loginUrl,
@@ -44,6 +50,7 @@ class AppConfigModel {
     required this.webrtcSdpUrl,
     required this.webrtcIceServers,
     required this.webrtcIceTransportPolicy,
+    required this.userLogoutType,
   });
 
   /// --- Fixed paths (never change) ---
@@ -100,6 +107,10 @@ class AppConfigModel {
       return 'all'; // default value
     }
 
+    final logout = json['user_logout'];
+    int parseLogout(dynamic v, [int d = 0]) =>
+        int.tryParse(v?.toString() ?? '') ?? d;
+
     return AppConfigModel(
       baseUrl: baseUrl,
       loginUrl: combineUrl(_loginPath),
@@ -119,6 +130,26 @@ class AppConfigModel {
       webrtcIceTransportPolicy: parseTransportPolicy(
         webrtc['iceTransportPolicy'],
       ),
+      userLogoutType: parseLogout(logout, 0),
     );
+  }
+}
+
+enum UserLogoutType {
+  onToken, // 0
+  onClose, // 1
+  onButton, // 2
+}
+
+extension UserLogoutTypeExt on int {
+  UserLogoutType get toLogoutType {
+    switch (this) {
+      case 1:
+        return UserLogoutType.onClose;
+      case 2:
+        return UserLogoutType.onButton;
+      default:
+        return UserLogoutType.onToken;
+    }
   }
 }

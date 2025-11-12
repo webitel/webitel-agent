@@ -17,17 +17,20 @@ class TokenWatcher {
   void start() {
     if (_running) return;
     _running = true;
-    _timer = Timer.periodic(const Duration(minutes: 5), (_) => _check());
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) => _check());
     _check();
   }
 
   Future<void> _check() async {
     final token = await _storage.readAccessToken();
-    if (token == null || token.isEmpty) return;
+    if (token == null || token.isEmpty) await onExpired();
 
     try {
       final uri = Uri.parse('$baseUrl/api/userinfo');
-      final resp = await http.get(uri, headers: {'X-Webitel-Access': token});
+      final resp = await http.get(
+        uri,
+        headers: {'X-Webitel-Access': token ?? ''},
+      );
       if (resp.statusCode == 401) {
         logger.warn(
           '[TokenWatcher] Token expired (401). Triggering onExpired.',

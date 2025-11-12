@@ -4,7 +4,10 @@ import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:tray_manager/tray_manager.dart';
+import 'package:webitel_desk_track/app/flow.dart';
+import 'package:webitel_desk_track/config/model/config.dart';
 import 'package:webitel_desk_track/gen/assets.gen.dart';
+import 'package:webitel_desk_track/service/auth/logout.dart';
 import 'package:webitel_desk_track/storage/storage.dart';
 import 'package:webitel_desk_track/ws/model/agent_status.dart';
 import 'package:webitel_desk_track/ws/ws.dart';
@@ -15,7 +18,7 @@ import '../../core/logger.dart';
 class TrayService with TrayListener {
   static final TrayService instance = TrayService._();
 
-  final _secureStorage = SecureStorageService();
+  final _storage = SecureStorageService();
 
   TrayService._();
 
@@ -58,7 +61,7 @@ class TrayService with TrayListener {
   }
 
   Future<void> _checkInitialLoginStatusAndSetBaseUrl() async {
-    final token = await _secureStorage.readAccessToken();
+    final token = await _storage.readAccessToken();
 
     if (token != null) {
       logger.debug('TrayService: Found existing token on launch.');
@@ -85,22 +88,38 @@ class TrayService with TrayListener {
   }
 
   Future<void> _buildMenu() async {
-    final menu = Menu(
-      items: [
-        MenuItem(key: 'status', label: 'Status: $_status', disabled: true),
-        MenuItem.separator(),
-        MenuItem(key: 'upload_config', label: 'Upload Configuration'),
-      ],
-    );
+    final logoutType = AppConfig.instance.userLogoutType.toLogoutType;
 
-    await trayManager.setContextMenu(menu);
+    final items = <MenuItem>[
+      MenuItem(key: 'status', label: 'Status: $_status', disabled: true),
+      MenuItem.separator(),
+      MenuItem(key: 'upload_config', label: 'Upload Configuration'),
+    ];
+
+    if (logoutType == UserLogoutType.onButton) {
+      items.add(MenuItem.separator());
+      items.add(MenuItem(key: 'logout', label: 'Logout'));
+    }
+
+    await trayManager.setContextMenu(Menu(items: items));
   }
 
   @override
   void onTrayMenuItemClick(MenuItem menuItem) {
     if (menuItem.key == 'upload_config') {
       _handleUploadConfig();
+    } else if (menuItem.key == 'logout') {
+      _handleLogout();
     }
+  }
+
+  Future<void> _handleLogout() async {
+    final logoutService = LogoutService();
+
+    await logoutService.logout();
+    await _storage.flush();
+    await AppFlow.interactiveRelogin();
+    await trayManager.setToolTip('Logged out');
   }
 
   @override
