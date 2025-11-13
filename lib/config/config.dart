@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
+import 'package:webitel_desk_track/core/logger.dart';
 
 import 'model/config.dart';
 
@@ -11,9 +12,7 @@ class AppConfig {
 
   static AppConfigModel get instance {
     if (_config == null) {
-      throw Exception(
-        'AppConfig is not initialized. Call AppConfig.load() first.',
-      );
+      logger.error('AppConfig: Config not loaded');
     }
     return _config!;
   }
