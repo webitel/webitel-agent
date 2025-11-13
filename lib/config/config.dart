@@ -12,7 +12,8 @@ class AppConfig {
 
   static AppConfigModel get instance {
     if (_config == null) {
-      logger.error('AppConfig: Config not loaded');
+      logger.warn('AppConfig: Config not loaded, returning empty default.');
+      return AppConfigModel.empty();
     }
     return _config!;
   }

@@ -53,6 +53,28 @@ class AppConfigModel {
     required this.userLogoutType,
   });
 
+  factory AppConfigModel.empty() {
+    return AppConfigModel(
+      baseUrl: '',
+      loginUrl: '',
+      webitelWsUrl: '',
+      videoWidth: 1280,
+      videoHeight: 720,
+      videoFramerate: 30,
+      videoSaveLocally: false,
+      maxCallRecordDuration: 3600,
+      logInfo: false,
+      logDebug: false,
+      logError: false,
+      logToFile: false,
+      logFilePath: '/tmp/log.txt',
+      webrtcSdpUrl: '',
+      webrtcIceServers: const [],
+      webrtcIceTransportPolicy: 'all',
+      userLogoutType: 0,
+    );
+  }
+
   /// --- Fixed paths (never change) ---
   static const String _loginPath = '/';
 
