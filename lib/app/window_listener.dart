@@ -1,4 +1,4 @@
-// lib/app/window_listener.dart
+import 'dart:io';
 import 'package:webitel_desk_track/config/config.dart';
 import 'package:webitel_desk_track/config/model/config.dart';
 import 'package:webitel_desk_track/service/auth/logout.dart';
@@ -11,12 +11,37 @@ import 'package:webitel_desk_track/core/logger.dart';
 class MyWindowListener extends WindowListener {
   @override
   Future<void> onWindowClose() async {
-    final storage = SecureStorageService();
-    logger.info('[WindowListener] Intercepted window close — running cleanup.');
+    await windowManager.setPreventClose(true);
 
-    // ensure tray disposed
+    logger.info(
+      '[WindowListener] Close button clicked - hiding to tray instead of closing',
+    );
+
+    try {
+      //FIXME
+      //due to this https://github.com/leanflutter/tray_manager/issues/44
+      if (Platform.isMacOS) {
+        await windowManager.minimize();
+      } else {
+        await windowManager.hide();
+      }
+
+      await windowManager.setSkipTaskbar(true);
+
+      logger.info('[WindowListener] Window hidden. App continues in tray.');
+    } catch (e, st) {
+      logger.error('[WindowListener] Failed to hide window', e, st);
+    }
+  }
+
+  static Future<void> exitApp() async {
+    final storage = SecureStorageService();
+    logger.info('[WindowListener] Exit requested - running full cleanup.');
+
+    // Dispose tray
     try {
       TrayService.instance.dispose();
+      logger.info('[WindowListener] Tray disposed.');
     } catch (e, st) {
       logger.warn('[WindowListener] Tray dispose error: $e\n$st');
     }
@@ -25,24 +50,28 @@ class MyWindowListener extends WindowListener {
       final logoutType = AppConfig.instance.userLogoutType.toLogoutType;
 
       if (logoutType == UserLogoutType.onClose) {
-        logger.info('Logging out on app close...');
-
+        logger.info('[WindowListener] Logging out on app exit...');
         final logoutService = LogoutService();
         await logoutService.logout();
         await storage.flush();
       }
     } catch (e, st) {
-      logger.error('[WindowListener] Logout on close error:', e, st);
+      logger.error('[WindowListener] Logout on exit error:', e, st);
     }
 
-    // perform global cleanup via AppFlow
     try {
       await AppFlow.shutdown();
     } catch (e, st) {
       logger.warn('[WindowListener] AppFlow.shutdown error: $e\n$st');
     }
 
-    // finally destroy the window (will close process)
-    await windowManager.destroy();
+    try {
+      await windowManager.destroy();
+      logger.info('[WindowListener] Window destroyed. Exiting...');
+    } catch (e, st) {
+      logger.error('[WindowListener] Failed to destroy window', e, st);
+    }
+
+    exit(0);
   }
 }

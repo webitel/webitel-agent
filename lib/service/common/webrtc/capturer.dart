@@ -1,5 +1,4 @@
 import 'dart:io';
-
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_desk_track/config/config.dart';
 import 'package:webitel_desk_track/core/logger.dart';
@@ -46,24 +45,38 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows() async {
             'frameRate': frameRate.toDouble(),
           },
         },
+        // getDisplayMedia(audio: true) → NOT reliable for system audio,
+        // so we’ll handle mic audio separately below.
         'audio': false,
       };
 
       try {
-        final stream = await navigator.mediaDevices.getDisplayMedia(
+        // 🖥️ Start screen capture
+        final screenStream = await navigator.mediaDevices.getDisplayMedia(
           constraints,
         );
-        streams.add(stream);
 
-        logger.info('[Capturer] Capture started for ${source.name}');
+        // 🎤 Add microphone audio
+        final micStream = await navigator.mediaDevices.getUserMedia({
+          'audio': true,
+        });
+
+        // Add mic track(s) to the screen stream
+        for (final track in micStream.getAudioTracks()) {
+          screenStream.addTrack(track);
+        }
+
+        streams.add(screenStream);
+
+        logger.info(
+          '[Capturer] Capture (screen + mic) started for ${source.name}',
+        );
       } catch (e, st) {
         logger.error('[Capturer] Error capturing ${source.name}', e, st);
       }
     }
 
-    logger.info(
-      '[Capturer] All monitors captured: ${streams.length} streams total',
-    );
+    logger.info('[Capturer] All monitors captured: ${streams.length} total');
 
     return streams;
   } catch (e, st) {
@@ -74,41 +87,51 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows() async {
 
 Future<MediaStream?> captureDesktopScreen() async {
   final config = AppConfig.instance;
-
   final int width = config.videoWidth;
   final int height = config.videoHeight;
   final int frameRate = config.videoFramerate;
 
   try {
-    logger.info(
-      '[Capturer] Starting screen capture: width=$width, height=$height, frameRate=$frameRate',
-    );
+    logger.info('[Capturer] Starting screen capture');
 
-    List<DesktopCapturerSource> sources = await desktopCapturer.getSources(
+    final sources = await desktopCapturer.getSources(
       types: [SourceType.Screen],
     );
+    final source = sources.first;
 
-    final Map<String, dynamic> constraints = {
+    final screenStream = await navigator.mediaDevices.getDisplayMedia({
       'video': {
-        !Platform.isWindows ? 'displaySurface' : 'monitor': '',
-        Platform.isWindows ? 'deviceId' : sources.first.id: '',
+        'deviceId': source.id,
         'mandatory': {
-          'maxWidth': width + 10,
-          'minWidth': width - 10,
-          'maxHeight': height + 10,
-          'minHeight': height - 10,
+          'maxWidth': width,
+          'maxHeight': height,
           'maxFramerate': frameRate,
-          'frameRate': frameRate.toDouble(),
         },
       },
-      'audio': false,
-    };
+      'audio': true,
+    });
 
-    final stream = await mediaDevices.getDisplayMedia(constraints);
+    final systemAudioTracks = screenStream.getAudioTracks();
+    logger.info(
+      '[Capturer] System audio tracks captured: ${systemAudioTracks.length}',
+    );
 
-    logger.info('[Capturer] Screen capture started successfully');
+    final mediaDevices = navigator.mediaDevices;
+    var devices = await mediaDevices.enumerateDevices();
+    logger.info(
+      '[Capturer] Enumerated media devices for mic: ${devices.length}',
+    );
 
-    return stream;
+    final micStream = await navigator.mediaDevices.getUserMedia({
+      'audio': true,
+    });
+
+    for (final track in micStream.getAudioTracks()) {
+      screenStream.addTrack(track);
+    }
+
+    logger.info('[Capturer] Screen + mic capture started successfully');
+    return screenStream;
   } catch (e, st) {
     logger.error('[Capturer] Error capturing screen', e, st);
     return null;

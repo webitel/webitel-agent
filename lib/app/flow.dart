@@ -1,5 +1,6 @@
 // lib/app/app_flow.dart
 import 'dart:async';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:webitel_desk_track/app/recording_manager.dart';
 import 'package:webitel_desk_track/core/logger.dart';
@@ -11,6 +12,7 @@ import 'package:webitel_desk_track/service/screenshot/screenshot_sender.dart';
 import 'package:webitel_desk_track/service/system/tray.dart';
 import 'package:webitel_desk_track/config/config.dart';
 import 'package:webitel_desk_track/ws/manager.dart';
+import 'package:window_manager/window_manager.dart';
 
 /// Central app lifecycle: login → initialize services → attach socket, recorders, screenshot.
 class AppFlow {
@@ -101,12 +103,34 @@ class AppFlow {
     };
   }
 
-  /// Do interactive relogin (clears token, prompts UI login, restarts services)
   static Future<void> interactiveRelogin() async {
     await _storage.deleteAccessToken();
 
     // stop everything gracefully
     await shutdown();
+
+    // Restore & focus app window if minimized/hidden
+    if (Platform.isWindows || Platform.isMacOS) {
+      await windowManager.ensureInitialized();
+
+      // make sure it's visible (shows in Dock/Taskbar)
+      final isVisible = await windowManager.isVisible();
+      if (!isVisible) {
+        await windowManager.show();
+      }
+
+      // if minimized → restore
+      final isMinimized = await windowManager.isMinimized();
+      if (isMinimized) {
+        await windowManager.restore();
+      }
+
+      // bring to front and focus
+      await windowManager.focus();
+
+      // optional: maximize for full visibility
+      await windowManager.maximize();
+    }
 
     // present login UI to user
     final ok = await LoginService.performLogin();

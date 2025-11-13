@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:webitel_desk_track/app/flow.dart';
+import 'package:webitel_desk_track/app/window_listener.dart';
 import 'package:webitel_desk_track/config/model/config.dart';
 import 'package:webitel_desk_track/gen/assets.gen.dart';
 import 'package:webitel_desk_track/service/auth/logout.dart';
@@ -89,7 +90,6 @@ class TrayService with TrayListener {
 
   Future<void> _buildMenu() async {
     final logoutType = AppConfig.instance.userLogoutType.toLogoutType;
-
     final items = <MenuItem>[
       MenuItem(key: 'status', label: 'Status: $_status', disabled: true),
       MenuItem.separator(),
@@ -101,6 +101,9 @@ class TrayService with TrayListener {
       items.add(MenuItem(key: 'logout', label: 'Logout'));
     }
 
+    items.add(MenuItem.separator());
+    items.add(MenuItem(key: 'exit', label: 'Exit'));
+
     await trayManager.setContextMenu(Menu(items: items));
   }
 
@@ -110,7 +113,14 @@ class TrayService with TrayListener {
       _handleUploadConfig();
     } else if (menuItem.key == 'logout') {
       _handleLogout();
+    } else if (menuItem.key == 'exit') {
+      _handleExit();
     }
+  }
+
+  Future<void> _handleExit() async {
+    logger.info('TrayService: Exit requested from tray menu');
+    await MyWindowListener.exitApp();
   }
 
   Future<void> _handleLogout() async {
