@@ -39,7 +39,6 @@ class ScreenStreamer {
     required OnAccept onAccept,
   }) async {
     final body = notif['body'] as Map<String, dynamic>?;
-
     final sdp = body?['sdp'] as String?;
     final parentId = body?['parent_id'] as String?;
     final fromUserId = body?['from_user_id'];
@@ -53,12 +52,27 @@ class ScreenStreamer {
 
     logger.info('[ScreenStreamer] screen_share received, parent_id=$parentId');
 
+    final pc = await createPeerConnection({
+      'iceServers': AppConfig.instance.webrtcIceServers,
+      'iceTransportPolicy': AppConfig.instance.webrtcIceTransportPolicy,
+    });
+
     List<MediaStream>? localStreams;
     MediaStream? localStream;
 
-    Platform.isWindows
-        ? localStreams = await captureAllDesktopScreensWindows()
-        : localStream = await captureDesktopScreen();
+    if (Platform.isWindows) {
+      localStreams = await captureAllDesktopScreensWindows(
+        FFmpegMode.streaming,
+        pc,
+      );
+    } else {
+      localStream = await captureDesktopScreen();
+      if (localStream != null) {
+        for (final track in localStream.getTracks()) {
+          await pc.addTrack(track, localStream);
+        }
+      }
+    }
 
     final screenStreamer = ScreenStreamer(
       id: parentId,
@@ -70,72 +84,53 @@ class ScreenStreamer {
       onAccept: onAccept,
     );
 
-    await screenStreamer.start();
+    await screenStreamer._init(pc: pc);
 
     final answer = await screenStreamer.localDescription;
-    if (answer == null) {
-      logger.error('[ScreenStreamer] localDescription is null after start()');
-      return screenStreamer;
+    if (answer != null) {
+      await onAccept('ss_accept', {
+        'id': notif['id'],
+        'sdp': answer.sdp,
+        'to_user_id': fromUserId,
+        'sock_id': sockId,
+        'session_id': parentId,
+      });
     }
-
-    await onAccept('ss_accept', {
-      'id': notif['id'],
-      'sdp': answer.sdp,
-      'to_user_id': fromUserId,
-      'sock_id': sockId,
-      'session_id': parentId,
-    });
 
     return screenStreamer;
   }
 
-  Future<void> start() async {
-    logger.info('[ScreenStreamer] Starting peer connection for id: $id');
+  Future<void> _init({required RTCPeerConnection pc}) async {
+    _pc = pc;
 
     try {
-      // Create peer connection
-      // In peer connection configuration:
-      _pc = await createPeerConnection({
-        'iceServers': AppConfig.instance.webrtcIceServers,
-        'iceTransportPolicy': AppConfig.instance.webrtcIceTransportPolicy,
-      });
-
-      logger.debug('[ScreenStreamer] Peer connection created');
-
-      _pc!.onSignalingState = (RTCSignalingState state) {
+      _pc!.onSignalingState = (state) {
         logger.debug('[ScreenStreamer] Signaling state: $state');
       };
-
-      _pc?.onIceGatheringState = (RTCIceGatheringState state) {
+      _pc!.onIceGatheringState = (state) {
         logger.debug('[ScreenStreamer] ICE gathering state: $state');
       };
-
-      _pc!.onConnectionState = (RTCPeerConnectionState state) async {
+      _pc!.onConnectionState = (state) async {
         logger.debug('[ScreenStreamer] Peer connection state: $state');
         if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
             state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
           logger.warn(
-            '[ScreenStreamer] Peer connection failed/closed, stopping stream...',
+            '[ScreenStreamer] Peer connection failed/closed, restarting ICE...',
           );
+
           await _pc?.restartIce();
         }
       };
-
-      _pc!.onIceConnectionState = (RTCIceConnectionState state) async {
+      _pc!.onIceConnectionState = (state) async {
+        if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+          await stopStereoAudioFFmpeg(FFmpegMode.streaming);
+        }
         logger.debug('[ScreenStreamer] ICE connection state: $state');
       };
 
-      // Set remote SDP
       await _pc!.setRemoteDescription(RTCSessionDescription(peerSdp, 'offer'));
+      logger.info('[ScreenStreamer] Remote SDP set:\n$peerSdp');
 
-      logger.info(
-        '[ScreenStreamer] >>>>>>>>>>>>>>>>>>>> Remote SDP answer set:\n'
-        '==================== SDP BEGIN ====================\n'
-        '${peerSdp.trim()}\n'
-        '===================== SDP END =====================',
-      );
-
-      // Add local tracks
       if (Platform.isWindows) {
         if (localStreams != null && localStreams!.isNotEmpty) {
           for (final stream in localStreams!) {
@@ -150,7 +145,6 @@ class ScreenStreamer {
           logger.warn('[ScreenStreamer] No local streams found for Windows');
         }
       } else {
-        // macOS / others
         if (localStream != null) {
           for (final track in localStream!.getTracks()) {
             await _pc!.addTrack(track, localStream!);
@@ -160,25 +154,16 @@ class ScreenStreamer {
           logger.warn('[ScreenStreamer] No local stream available');
         }
       }
-      // Create answer
-      // In offer/answer options:
+
       final answer = await _pc!.createAnswer({});
-      logger.debug('[ScreenStreamer] SDP answer created');
-
-      // Set local SDP
       await _pc!.setLocalDescription(answer);
-
       logger.info(
-        '[ScreenStreamer] >>>>>>>>>>>>>>>>>>>> Local SDP answer set:\n'
-        '==================== SDP BEGIN ====================\n'
-        '${answer.sdp?.trim() ?? "<empty>"}\n'
-        '===================== SDP END =====================',
+        '[ScreenStreamer] Local SDP answer set:\n${answer.sdp?.trim() ?? "<empty>"}',
       );
 
       await waitForIceGatheringComplete(_pc!);
-    } catch (e, stack) {
-      logger.error('[ScreenStreamer] Failed to start:', e, stack);
-      logger.debug(stack.toString());
+    } catch (e, st) {
+      logger.error('[ScreenStreamer] Failed to start:', e, st);
       close('Exception during start: $e');
     }
   }
@@ -188,7 +173,6 @@ class ScreenStreamer {
     Duration timeout = const Duration(seconds: 10),
   }) async {
     final start = DateTime.now();
-
     while (pc.iceGatheringState !=
         RTCIceGatheringState.RTCIceGatheringStateComplete) {
       await Future.delayed(const Duration(milliseconds: 200));
@@ -204,6 +188,7 @@ class ScreenStreamer {
 
   void close(String reason) {
     logger.warn('[ScreenStreamer] Closing: $reason');
+    stopStereoAudioFFmpeg(FFmpegMode.streaming);
 
     try {
       if (localStreams != null && localStreams!.isNotEmpty) {
@@ -216,7 +201,6 @@ class ScreenStreamer {
               logger.error('[ScreenStreamer] Error stopping track:', e, st);
             }
           }
-
           try {
             stream.dispose();
             logger.debug('[ScreenStreamer] Disposed stream');
@@ -224,7 +208,23 @@ class ScreenStreamer {
             logger.error('[ScreenStreamer] Error disposing stream:', e, st);
           }
         }
-        localStreams!.clear();
+      }
+
+      if (localStream != null) {
+        for (final track in localStream!.getTracks()) {
+          try {
+            track.stop();
+            logger.debug('[ScreenStreamer] Stopped track: ${track.kind}');
+          } catch (e, st) {
+            logger.error('[ScreenStreamer] Error stopping track:', e, st);
+          }
+        }
+        try {
+          localStream!.dispose();
+          logger.debug('[ScreenStreamer] Disposed stream');
+        } catch (e, st) {
+          logger.error('[ScreenStreamer] Error disposing stream:', e, st);
+        }
       }
 
       _pc?.close();

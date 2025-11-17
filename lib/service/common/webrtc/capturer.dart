@@ -1,9 +1,37 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_desk_track/config/config.dart';
 import 'package:webitel_desk_track/core/logger.dart';
 
-Future<List<MediaStream>> captureAllDesktopScreensWindows() async {
+Future<String?> getStereoMixDeviceId() async {
+  final ffmpegProcess = await Process.start('ffmpeg', [
+    '-list_devices',
+    'true',
+    '-f',
+    'dshow',
+    '-i',
+    'dummy',
+  ], runInShell: true);
+
+  await for (var line in ffmpegProcess.stderr
+      .transform(utf8.decoder)
+      .transform(LineSplitter())) {
+    if (line.contains('Stereo') && line.contains('"')) {
+      final match = RegExp(r'"(.*)"').firstMatch(line);
+      if (match != null) return match.group(1);
+    }
+  }
+
+  await ffmpegProcess.exitCode;
+  return null;
+}
+
+Future<List<MediaStream>> captureAllDesktopScreensWindows(
+  FFmpegMode mode,
+  RTCPeerConnection pc,
+) async {
   final config = AppConfig.instance;
   final int width = config.videoWidth;
   final int height = config.videoHeight;
@@ -13,27 +41,36 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows() async {
 
   try {
     if (!Platform.isWindows) {
-      throw Exception(
-        'captureAllDesktopScreensWindows() available only on Windows',
-      );
+      throw Exception('captureAllDesktopScreensWindows() is Windows only');
     }
 
-    logger.info('[Capturer] Enumerating all desktop sources...');
+    logger.info('[Capturer] Enumerating desktop sources...');
     final sources = await desktopCapturer.getSources(
       types: [SourceType.Screen],
     );
 
-    if (sources.isEmpty) {
-      logger.error('[Capturer] No desktop sources found');
+    if (sources.isEmpty) return [];
+
+    final dataChannel = await pc.createDataChannel(
+      'audio/opus',
+      RTCDataChannelInit()
+        ..ordered = true
+        ..maxRetransmits = 0,
+    );
+
+    dataChannel.onDataChannelState = (state) {
+      logger.info('[Capturer] DataChannel state: $state');
+    };
+
+    final deviceId = await getStereoMixDeviceId();
+    if (deviceId == null) {
+      logger.error('[Capturer] Stereo Mix device not found!');
       return [];
     }
+    logger.info('[Capturer] Using Stereo Mix device: $deviceId');
 
     for (final source in sources) {
-      logger.info(
-        '[Capturer] Starting capture for monitor: ${source.name} (${source.id})',
-      );
-
-      final constraints = {
+      final screenStream = await navigator.mediaDevices.getDisplayMedia({
         'video': {
           'deviceId': source.id,
           'mandatory': {
@@ -45,43 +82,133 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows() async {
             'frameRate': frameRate.toDouble(),
           },
         },
-        // getDisplayMedia(audio: true) → NOT reliable for system audio,
-        // so we’ll handle mic audio separately below.
         'audio': false,
-      };
+      });
 
-      try {
-        // 🖥️ Start screen capture
-        final screenStream = await navigator.mediaDevices.getDisplayMedia(
-          constraints,
-        );
-
-        // 🎤 Add microphone audio
-        final micStream = await navigator.mediaDevices.getUserMedia({
-          'audio': true,
-        });
-
-        // Add mic track(s) to the screen stream
-        for (final track in micStream.getAudioTracks()) {
-          screenStream.addTrack(track);
-        }
-
-        streams.add(screenStream);
-
-        logger.info(
-          '[Capturer] Capture (screen + mic) started for ${source.name}',
-        );
-      } catch (e, st) {
-        logger.error('[Capturer] Error capturing ${source.name}', e, st);
+      final micStream = await navigator.mediaDevices.getUserMedia({
+        'audio': true,
+      });
+      for (final track in micStream.getAudioTracks()) {
+        screenStream.addTrack(track);
       }
-    }
 
-    logger.info('[Capturer] All monitors captured: ${streams.length} total');
+      // Запускаємо FFmpeg стрімінг
+      await startStreamingFFmpeg(deviceId, dataChannel, 48 * 1000, mode);
+
+      streams.add(screenStream);
+      logger.info('[Capturer] Capture started for monitor ${source.name}');
+    }
 
     return streams;
   } catch (e, st) {
     logger.error('[Capturer] Global capture error', e, st);
     return [];
+  }
+}
+
+enum FFmpegMode { streaming, recording }
+
+Process? _streamingProcess;
+Process? _recordingProcess;
+
+Future<Process?> startStreamingFFmpeg(
+  String deviceId,
+  RTCDataChannel audioChannel,
+  int bitrate,
+  FFmpegMode mode,
+) async {
+  final ffmpegArgs = [
+    '-f', 'dshow',
+    '-i', 'audio=$deviceId', // пристрій Stereo Mix
+    '-c:a', 'libmp3lame', // MP3 codec
+    '-b:a', '${bitrate}k', // bitrate
+    '-ar', '44100', // частота дискретизації
+    '-ac', '2', // стерео
+    '-fflags', '+nobuffer', // вимикаємо внутрішню буферизацію
+    '-flush_packets', '1', // скидання пакетів одразу
+    '-f', 'mp3', // MP3 контейнер
+    'pipe:1', // вивід на stdout
+  ];
+
+  logger.info(
+    '[Capturer] Starting FFmpeg ($mode): ffmpeg ${ffmpegArgs.join(' ')}',
+  );
+
+  // Стартуємо процес
+  final process = await Process.start('ffmpeg', ffmpegArgs, runInShell: true);
+
+  // Зберігаємо в правильну глобальну змінну
+  if (mode == FFmpegMode.streaming) {
+    _streamingProcess = process;
+  } else {
+    _recordingProcess = process;
+  }
+
+  // stderr для дебагу
+  process.stderr
+      .transform(utf8.decoder)
+      .transform(LineSplitter())
+      .listen((line) => logger.debug('[FFmpeg STDERR] $line'));
+
+  // stdout → DataChannel
+  const chunkSize = 4096;
+  process.stdout.listen(
+    (chunk) {
+      int offset = 0;
+      while (offset < chunk.length) {
+        final end =
+            (offset + chunkSize < chunk.length)
+                ? offset + chunkSize
+                : chunk.length;
+        final subchunk = Uint8List.fromList(chunk.sublist(offset, end));
+
+        if (audioChannel.state == RTCDataChannelState.RTCDataChannelOpen) {
+          audioChannel.send(RTCDataChannelMessage.fromBinary(subchunk));
+        }
+
+        offset = end;
+      }
+    },
+    onDone: () {
+      logger.info('[Capturer] FFmpeg stdout done, closing DataChannel');
+      audioChannel.close();
+    },
+    onError: (e) => logger.error('[Capturer] FFmpeg stdout error', e),
+    cancelOnError: true,
+  );
+
+  return process;
+}
+
+Future<void> stopStereoAudioFFmpeg(FFmpegMode mode) async {
+  Process? process;
+  if (mode == FFmpegMode.streaming) process = _streamingProcess;
+  if (mode == FFmpegMode.recording) process = _recordingProcess;
+
+  if (process == null) return;
+
+  try {
+    process.stdin.writeln('q');
+    await process.stdin.flush();
+    await process.stdin.close();
+
+    await process.stdout.drain();
+    await process.stderr.drain();
+
+    // чекаємо завершення
+    await process.exitCode.timeout(
+      const Duration(seconds: 2),
+      onTimeout: () {
+        logger.warn('[Capturer] FFmpeg did not exit, killing process');
+        process?.kill();
+        return -1;
+      },
+    );
+  } catch (e, st) {
+    logger.error('[Capturer] Error stopping FFmpeg', e, st);
+  } finally {
+    if (mode == FFmpegMode.streaming) _streamingProcess = null;
+    if (mode == FFmpegMode.recording) _recordingProcess = null;
   }
 }
 
