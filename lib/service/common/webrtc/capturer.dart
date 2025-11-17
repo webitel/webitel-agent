@@ -92,7 +92,6 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
         screenStream.addTrack(track);
       }
 
-      // Запускаємо FFmpeg стрімінг
       await startStreamingFFmpeg(deviceId, dataChannel, 48 * 1000, mode);
 
       streams.add(screenStream);
@@ -119,32 +118,29 @@ Future<Process?> startStreamingFFmpeg(
 ) async {
   final ffmpegArgs = [
     '-f', 'dshow',
-    '-i', 'audio=$deviceId', // пристрій Stereo Mix
-    '-c:a', 'libmp3lame', // MP3 codec
+    '-i', 'audio=$deviceId', // input with Stereo Mix
+    '-c:a', 'libmp3lame', // codec MP3
     '-b:a', '${bitrate}k', // bitrate
-    '-ar', '44100', // частота дискретизації
-    '-ac', '2', // стерео
-    '-fflags', '+nobuffer', // вимикаємо внутрішню буферизацію
-    '-flush_packets', '1', // скидання пакетів одразу
-    '-f', 'mp3', // MP3 контейнер
-    'pipe:1', // вивід на stdout
+    '-ar', '44100', // frequency
+    '-ac', '2', // stereo
+    '-fflags', '+nobuffer', // turn off buffering
+    '-flush_packets', '1', // flush packets immediately
+    '-f', 'mp3', // MP3 container
+    'pipe:1', // output в stdout
   ];
 
   logger.info(
     '[Capturer] Starting FFmpeg ($mode): ffmpeg ${ffmpegArgs.join(' ')}',
   );
 
-  // Стартуємо процес
   final process = await Process.start('ffmpeg', ffmpegArgs, runInShell: true);
 
-  // Зберігаємо в правильну глобальну змінну
   if (mode == FFmpegMode.streaming) {
     _streamingProcess = process;
   } else {
     _recordingProcess = process;
   }
 
-  // stderr для дебагу
   process.stderr
       .transform(utf8.decoder)
       .transform(LineSplitter())
@@ -195,7 +191,6 @@ Future<void> stopStereoAudioFFmpeg(FFmpegMode mode) async {
     await process.stdout.drain();
     await process.stderr.drain();
 
-    // чекаємо завершення
     await process.exitCode.timeout(
       const Duration(seconds: 2),
       onTimeout: () {
