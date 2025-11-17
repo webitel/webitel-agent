@@ -4,9 +4,11 @@ import 'dart:typed_data';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_desk_track/config/config.dart';
 import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/service/ffmpeg_manager/ffmpeg_manager.dart';
 
 Future<String?> getStereoMixDeviceId() async {
-  final ffmpegProcess = await Process.start('ffmpeg', [
+  final ffmpegPath = await FFmpegManager.instance.path;
+  final ffmpegProcess = await Process.start(ffmpegPath, [
     '-list_devices',
     'true',
     '-f',
@@ -132,8 +134,8 @@ Future<Process?> startStreamingFFmpeg(
   logger.info(
     '[Capturer] Starting FFmpeg ($mode): ffmpeg ${ffmpegArgs.join(' ')}',
   );
-
-  final process = await Process.start('ffmpeg', ffmpegArgs, runInShell: true);
+  final ffmpegPath = await FFmpegManager.instance.path;
+  final process = await Process.start(ffmpegPath, ffmpegArgs, runInShell: true);
 
   if (mode == FFmpegMode.streaming) {
     _streamingProcess = process;
