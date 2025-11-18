@@ -68,6 +68,9 @@ class WebitelSocket {
   factory WebitelSocket({required WebitelSocketConfig config}) {
     _instance.config = config;
     _instance._token = config.token;
+    _instance.screenshotService = ScreenshotSenderService(
+      baseUrl: AppConfig.instance.baseUrl,
+    );
     return _instance;
   }
 
