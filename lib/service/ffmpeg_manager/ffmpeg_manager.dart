@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/services.dart' show rootBundle;
-// ignore: depend_on_referenced_packages
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 class FFmpegManager {
   FFmpegManager._();
@@ -12,10 +12,10 @@ class FFmpegManager {
   Future<String> get path async {
     if (_ffmpegPath != null) return _ffmpegPath!;
 
-    final localDir = Directory(
-      '${Platform.environment['LOCALAPPDATA'] ?? '/tmp'}/MyApp',
-    );
-    if (!await localDir.exists()) await localDir.create(recursive: true);
+    final localDir = await getApplicationSupportDirectory();
+    if (!await localDir.exists()) {
+      await localDir.create(recursive: true);
+    }
 
     String assetPath;
     String ffmpegFileName;
