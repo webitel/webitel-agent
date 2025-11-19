@@ -67,11 +67,11 @@ class ScreenStreamer {
       );
     } else {
       localStream = await captureDesktopScreen();
-      if (localStream != null) {
-        for (final track in localStream.getTracks()) {
-          await pc.addTrack(track, localStream);
-        }
-      }
+      // if (localStream != null) {
+      //   for (final track in localStream.getTracks()) {
+      //     await pc.addTrack(track, localStream);
+      //   }
+      // }
     }
 
     final screenStreamer = ScreenStreamer(

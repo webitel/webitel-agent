@@ -11,7 +11,6 @@ class AppConfigModel {
   // --- Video configuration ---
   final int videoWidth;
   final int videoHeight;
-  final int videoFramerate;
   final bool videoSaveLocally;
   final int maxCallRecordDuration;
 
@@ -27,19 +26,12 @@ class AppConfigModel {
   final List<Map<String, dynamic>> webrtcIceServers;
   final String webrtcIceTransportPolicy;
 
-  // --- Logout type ---
-  // 0 - on token (default)
-  // 1 - on close
-  // 2 - on button
-  final int userLogoutType;
-
   AppConfigModel({
     required this.baseUrl,
     required this.loginUrl,
     required this.webitelWsUrl,
     required this.videoWidth,
     required this.videoHeight,
-    required this.videoFramerate,
     required this.videoSaveLocally,
     required this.maxCallRecordDuration,
     required this.logInfo,
@@ -50,7 +42,6 @@ class AppConfigModel {
     required this.webrtcSdpUrl,
     required this.webrtcIceServers,
     required this.webrtcIceTransportPolicy,
-    required this.userLogoutType,
   });
 
   factory AppConfigModel.empty() {
@@ -60,7 +51,6 @@ class AppConfigModel {
       webitelWsUrl: '',
       videoWidth: 1280,
       videoHeight: 720,
-      videoFramerate: 30,
       videoSaveLocally: false,
       maxCallRecordDuration: 3600,
       logInfo: false,
@@ -71,7 +61,6 @@ class AppConfigModel {
       webrtcSdpUrl: '',
       webrtcIceServers: const [],
       webrtcIceTransportPolicy: 'all',
-      userLogoutType: 0,
     );
   }
 
@@ -129,17 +118,12 @@ class AppConfigModel {
       return 'all'; // default value
     }
 
-    final logout = json['user_logout'];
-    int parseLogout(dynamic v, [int d = 0]) =>
-        int.tryParse(v?.toString() ?? '') ?? d;
-
     return AppConfigModel(
       baseUrl: baseUrl,
       loginUrl: combineUrl(_loginPath),
       webitelWsUrl: combineWsUrl(_websocketPath),
       videoWidth: parseInt(video['width'], 1280),
       videoHeight: parseInt(video['height'], 720),
-      videoFramerate: parseInt(video['framerate'], 30),
       videoSaveLocally: parseBool(video['saveLocally']),
       maxCallRecordDuration: parseInt(video['maxCallRecordDuration'], 3600),
       logInfo: parseBool(logger['info']),
@@ -152,26 +136,6 @@ class AppConfigModel {
       webrtcIceTransportPolicy: parseTransportPolicy(
         webrtc['iceTransportPolicy'],
       ),
-      userLogoutType: parseLogout(logout, 0),
     );
-  }
-}
-
-enum UserLogoutType {
-  onToken, // 0
-  onClose, // 1
-  onButton, // 2
-}
-
-extension UserLogoutTypeExt on int {
-  UserLogoutType get toLogoutType {
-    switch (this) {
-      case 1:
-        return UserLogoutType.onClose;
-      case 2:
-        return UserLogoutType.onButton;
-      default:
-        return UserLogoutType.onToken;
-    }
   }
 }

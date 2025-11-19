@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_desk_track/config/config.dart';
 import 'package:webitel_desk_track/core/logger.dart';
-import 'package:webitel_desk_track/service/ffmpeg_manager/ffmpeg_manager.dart';
 
 Future<String?> getStereoMixDeviceId() async {
   // final ffmpegPath = await FFmpegManager.instance.path;
@@ -72,7 +71,6 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
   final config = AppConfig.instance;
   final int width = config.videoWidth;
   final int height = config.videoHeight;
-  final int frameRate = config.videoFramerate;
 
   final List<MediaStream> streams = [];
 
@@ -119,8 +117,6 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
             'minWidth': width - 10,
             'maxHeight': height + 10,
             'minHeight': height - 10,
-            'maxFramerate': frameRate,
-            'frameRate': frameRate.toDouble(),
           },
         },
         'audio': false,
@@ -264,7 +260,6 @@ Future<MediaStream?> captureDesktopScreen() async {
   final config = AppConfig.instance;
   final int width = config.videoWidth;
   final int height = config.videoHeight;
-  final int frameRate = config.videoFramerate;
 
   try {
     logger.info('[Capturer] Starting screen capture');
@@ -277,11 +272,7 @@ Future<MediaStream?> captureDesktopScreen() async {
     final screenStream = await navigator.mediaDevices.getDisplayMedia({
       'video': {
         'deviceId': source.id,
-        'mandatory': {
-          'maxWidth': width,
-          'maxHeight': height,
-          'maxFramerate': frameRate,
-        },
+        'mandatory': {'maxWidth': width, 'maxHeight': height},
       },
       'audio': true,
     });
