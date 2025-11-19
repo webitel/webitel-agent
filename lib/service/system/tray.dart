@@ -98,7 +98,7 @@ class TrayService with TrayListener {
     items.add(MenuItem(key: 'logout', label: 'Logout'));
 
     items.add(MenuItem.separator());
-    items.add(MenuItem(key: 'exit', label: 'Exit'));
+    items.add(MenuItem(key: 'close', label: 'Close'));
 
     await trayManager.setContextMenu(Menu(items: items));
   }
