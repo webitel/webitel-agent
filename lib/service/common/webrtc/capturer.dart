@@ -166,31 +166,20 @@ Future<Process?> startStreamingFFmpeg(
   FFmpegMode mode,
 ) async {
   final ffmpegArgs = [
-    '-f',
-    'dshow',
-    '-i',
-    'audio=$stereoMixId',
-    '-f',
-    'dshow',
-    '-i',
-    'audio=$micId',
+    '-f', 'dshow', // DirectShow input
+    '-i', 'audio=$stereoMixId', // Stereo Mix input
+    '-f', 'dshow',
+    '-i', 'audio=$micId', // Microphone input
     '-filter_complex',
-    '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0',
-    '-c:a',
-    'libmp3lame',
-    '-b:a',
-    '${bitrate}k',
-    '-ar',
-    '44100',
-    '-ac',
-    '2',
-    '-fflags',
-    '+nobuffer',
-    '-flush_packets',
-    '1',
-    '-f',
-    'mp3',
-    'pipe:1',
+    '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0', // Mix audio
+    '-c:a', 'libmp3lame', // MP3 encoder
+    '-b:a', '${bitrate}k', // Bitrate
+    '-ar', '44100', // Sample rate
+    '-ac', '2', // Stereo
+    '-fflags', '+nobuffer', // Low latency
+    '-flush_packets', '1', // Flush packets immediately
+    '-f', 'mp3', // Output format
+    'pipe:1', // Output to stdout
   ];
 
   logger.info(
