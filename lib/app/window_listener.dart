@@ -1,8 +1,4 @@
 import 'dart:io';
-import 'package:webitel_desk_track/config/config.dart';
-import 'package:webitel_desk_track/config/model/config.dart';
-import 'package:webitel_desk_track/service/auth/logout.dart';
-import 'package:webitel_desk_track/storage/storage.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:webitel_desk_track/service/system/tray.dart';
 import 'package:webitel_desk_track/app/flow.dart';
@@ -35,7 +31,6 @@ class MyWindowListener extends WindowListener {
   }
 
   static Future<void> exitApp() async {
-    final storage = SecureStorageService();
     logger.info('[WindowListener] Exit requested - running full cleanup.');
 
     // Dispose tray
@@ -44,19 +39,6 @@ class MyWindowListener extends WindowListener {
       logger.info('[WindowListener] Tray disposed.');
     } catch (e, st) {
       logger.warn('[WindowListener] Tray dispose error: $e\n$st');
-    }
-
-    try {
-      final logoutType = AppConfig.instance.userLogoutType.toLogoutType;
-
-      if (logoutType == UserLogoutType.onClose) {
-        logger.info('[WindowListener] Logging out on app exit...');
-        final logoutService = LogoutService();
-        await logoutService.logout();
-        await storage.flush();
-      }
-    } catch (e, st) {
-      logger.error('[WindowListener] Logout on exit error:', e, st);
     }
 
     try {

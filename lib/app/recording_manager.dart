@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:webitel_desk_track/core/logger.dart';
 import 'package:webitel_desk_track/config/config.dart';
-import 'package:webitel_desk_track/service/common/webrtc/config.dart';
 import 'package:webitel_desk_track/service/recording/ffmpeg/recorder.dart';
 import 'package:webitel_desk_track/service/recording/recorder.dart';
 import 'package:webitel_desk_track/service/recording/webrtc/webrtc_recorder.dart';
@@ -66,7 +65,7 @@ class RecordingManager {
             : StreamRecorder(
               callId: recordingId,
               token: token,
-              sdpResolverUrl: WebRTCConfig.fromEnv().sdpUrl,
+              sdpResolverUrl: AppConfig.instance.webrtcSdpUrl,
               iceServers: appConfig.webrtcIceServers,
             );
 
