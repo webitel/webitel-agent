@@ -321,9 +321,7 @@ class WebitelSocket {
     switch (callEvent) {
       case 'ringing':
       case 'update':
-        if (callId != null
-        //  && recordScreen
-        ) {
+        if (callId != null && recordScreen) {
           _screenRecordingActive = true;
           _onCallRinging?.call(parentId ?? callId);
           _lastCallId = callId;
