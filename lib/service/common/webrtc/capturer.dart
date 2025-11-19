@@ -7,8 +7,10 @@ import 'package:webitel_desk_track/core/logger.dart';
 import 'package:webitel_desk_track/service/ffmpeg_manager/ffmpeg_manager.dart';
 
 Future<String?> getStereoMixDeviceId() async {
-  final ffmpegPath = await FFmpegManager.instance.path;
-  final ffmpegProcess = await Process.start(ffmpegPath, [
+  // final ffmpegPath = await FFmpegManager.instance.path;
+  // logger.info('[StereoMix] Using FFmpeg at: $ffmpegPath');
+
+  final ffmpegProcess = await Process.start('ffmpeg', [
     '-list_devices',
     'true',
     '-f',
@@ -20,14 +22,47 @@ Future<String?> getStereoMixDeviceId() async {
   await for (var line in ffmpegProcess.stderr
       .transform(utf8.decoder)
       .transform(LineSplitter())) {
+    logger.info('[FFMPEG STDERR] $line');
+
     if (line.contains('Stereo') && line.contains('"')) {
       final match = RegExp(r'"(.*)"').firstMatch(line);
-      if (match != null) return match.group(1);
+      if (match != null) {
+        final device = match.group(1);
+        logger.info('[StereoMix] Found device: $device');
+        return device;
+      }
+    }
+  }
+
+  final exitCode = await ffmpegProcess.exitCode;
+  logger.info('[FFMPEG] Process exited with code: $exitCode');
+
+  return null;
+}
+
+Future<String?> getMicrophoneDeviceId() async {
+  // final ffmpegPath = await FFmpegManager.instance.path;
+  final ffmpegProcess = await Process.start('ffmpeg', [
+    '-list_devices',
+    'true',
+    '-f',
+    'dshow',
+    '-i',
+    'dummy',
+  ], runInShell: true);
+
+  String? micId;
+  await for (var line in ffmpegProcess.stderr
+      .transform(utf8.decoder)
+      .transform(LineSplitter())) {
+    if (line.contains('Microphone') && line.contains('"')) {
+      final match = RegExp(r'"(.*)"').firstMatch(line);
+      if (match != null) micId = match.group(1);
     }
   }
 
   await ffmpegProcess.exitCode;
-  return null;
+  return micId;
 }
 
 Future<List<MediaStream>> captureAllDesktopScreensWindows(
@@ -64,12 +99,16 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
       logger.info('[Capturer] DataChannel state: $state');
     };
 
-    final deviceId = await getStereoMixDeviceId();
-    if (deviceId == null) {
-      logger.error('[Capturer] Stereo Mix device not found!');
+    final stereoMixId = await getStereoMixDeviceId();
+    final micId = await getMicrophoneDeviceId();
+
+    if (stereoMixId == null || micId == null) {
+      logger.error('[Capturer] Stereo Mix or Microphone not found!');
       return [];
     }
-    logger.info('[Capturer] Using Stereo Mix device: $deviceId');
+    logger.info(
+      '[Capturer] Using Stereo Mix: $stereoMixId, Microphone: $micId',
+    );
 
     for (final source in sources) {
       final screenStream = await navigator.mediaDevices.getDisplayMedia({
@@ -87,6 +126,7 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
         'audio': false,
       });
 
+      // Додаємо мікрофонні треки для WebRTC
       final micStream = await navigator.mediaDevices.getUserMedia({
         'audio': true,
       });
@@ -94,7 +134,13 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
         screenStream.addTrack(track);
       }
 
-      await startStreamingFFmpeg(deviceId, dataChannel, 48 * 1000, mode);
+      await startStreamingFFmpeg(
+        stereoMixId,
+        micId,
+        dataChannel,
+        48 * 1000,
+        mode,
+      );
 
       streams.add(screenStream);
       logger.info('[Capturer] Capture started for monitor ${source.name}');
@@ -113,29 +159,46 @@ Process? _streamingProcess;
 Process? _recordingProcess;
 
 Future<Process?> startStreamingFFmpeg(
-  String deviceId,
+  String stereoMixId,
+  String micId,
   RTCDataChannel audioChannel,
   int bitrate,
   FFmpegMode mode,
 ) async {
   final ffmpegArgs = [
-    '-f', 'dshow',
-    '-i', 'audio=$deviceId', // input with Stereo Mix
-    '-c:a', 'libmp3lame', // codec MP3
-    '-b:a', '${bitrate}k', // bitrate
-    '-ar', '44100', // frequency
-    '-ac', '2', // stereo
-    '-fflags', '+nobuffer', // turn off buffering
-    '-flush_packets', '1', // flush packets immediately
-    '-f', 'mp3', // MP3 container
-    'pipe:1', // output в stdout
+    '-f',
+    'dshow',
+    '-i',
+    'audio=$stereoMixId',
+    '-f',
+    'dshow',
+    '-i',
+    'audio=$micId',
+    '-filter_complex',
+    '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0',
+    '-c:a',
+    'libmp3lame',
+    '-b:a',
+    '${bitrate}k',
+    '-ar',
+    '44100',
+    '-ac',
+    '2',
+    '-fflags',
+    '+nobuffer',
+    '-flush_packets',
+    '1',
+    '-f',
+    'mp3',
+    'pipe:1',
   ];
 
   logger.info(
     '[Capturer] Starting FFmpeg ($mode): ffmpeg ${ffmpegArgs.join(' ')}',
   );
-  final ffmpegPath = await FFmpegManager.instance.path;
-  final process = await Process.start(ffmpegPath, ffmpegArgs, runInShell: true);
+
+  // final ffmpegPath = await FFmpegManager.instance.path;
+  final process = await Process.start('ffmpeg', ffmpegArgs, runInShell: true);
 
   if (mode == FFmpegMode.streaming) {
     _streamingProcess = process;
@@ -148,7 +211,6 @@ Future<Process?> startStreamingFFmpeg(
       .transform(LineSplitter())
       .listen((line) => logger.debug('[FFmpeg STDERR] $line'));
 
-  // stdout → DataChannel
   const chunkSize = 4096;
   process.stdout.listen(
     (chunk) {
