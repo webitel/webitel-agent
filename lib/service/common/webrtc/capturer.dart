@@ -89,7 +89,7 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
     if (sources.isEmpty) return [];
 
     final dataChannel = await pc.createDataChannel(
-      'audio/opus',
+      'audio/mp3',
       RTCDataChannelInit()
         ..ordered = true
         ..maxRetransmits = 0,
@@ -113,26 +113,21 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
     for (final source in sources) {
       final screenStream = await navigator.mediaDevices.getDisplayMedia({
         'video': {
-          'deviceId': source.id,
-          'mandatory': {
-            'maxWidth': width + 10,
-            'minWidth': width - 10,
-            'maxHeight': height + 10,
-            'minHeight': height - 10,
-            'maxFramerate': frameRate,
-            'frameRate': frameRate.toDouble(),
-          },
+          'mandatory': {'maxWidth': width, 'maxHeight': height},
+          'optional': [
+            {'scaleResolutionDownBy': 1.0},
+          ],
         },
         'audio': false,
       });
 
-      // Додаємо мікрофонні треки для WebRTC
-      final micStream = await navigator.mediaDevices.getUserMedia({
-        'audio': true,
-      });
-      for (final track in micStream.getAudioTracks()) {
-        screenStream.addTrack(track);
-      }
+      // FIXME
+      // final micStream = await navigator.mediaDevices.getUserMedia({
+      //   'audio': true,
+      // });
+      // for (final track in micStream.getAudioTracks()) {
+      //   screenStream.addTrack(track);
+      // }
 
       await startStreamingFFmpeg(
         stereoMixId,

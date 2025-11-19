@@ -47,10 +47,25 @@ class StreamRecorder implements Recorder {
     }
 
     if (streams.isEmpty) throw Exception('No screens captured');
-
+    // await Future.delayed(Duration(seconds: 1));
     for (final s in streams) {
       for (final t in s.getTracks()) {
-        pc!.addTrack(t, s);
+        // await Future.delayed(Duration(milliseconds: 500));
+        final sender = await pc!.addTrack(t, s);
+
+        if (t.kind == 'video') {
+          final params = sender.parameters;
+          if (params.encodings!.isEmpty) {
+            params.encodings!.add(RTCRtpEncoding());
+          }
+          params.encodings![0].maxBitrate = 4_000_000;
+          params.encodings![0].minBitrate = 500_000;
+          params.encodings![0].maxFramerate = 30;
+          params.encodings![0].scaleResolutionDownBy = 1.0;
+          params.degradationPreference =
+              RTCDegradationPreference.MAINTAIN_RESOLUTION;
+          await sender.setParameters(params);
+        }
       }
     }
 

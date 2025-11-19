@@ -9,9 +9,9 @@ class WindowsRecorder implements PlatformRecorder {
 
   @override
   Future<void> start(String filePath) async {
-    final ffmpegPath = await FFmpegManager.instance.path;
+    // final ffmpegPath = await FFmpegManager.instance.path;
 
-    _process = await Process.start(ffmpegPath, [
+    _process = await Process.start('ffmpeg', [
       '-f', 'gdigrab', // Windows screen grabber
       '-framerate', '15',
       '-i', 'desktop',
