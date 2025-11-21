@@ -60,12 +60,6 @@ class AppFlow {
     );
     screenshotService!.start();
 
-    // Agent control polling
-    // agentControlService ??= AgentControlService(
-    //   baseUrl: AppConfig.instance.baseUrl,
-    // );
-    // agentControlService!.start();
-
     // Recording manager (manages call/screen recorders)
     recordingManager ??= RecordingManager();
 
@@ -95,12 +89,6 @@ class AppFlow {
     // attach socket to services
     recordingManager!.attachSocket(socketManager!.socket);
     TrayService.instance.attachSocket(socketManager!.socket);
-
-    // listen for socket auth failures and handle centrally
-    socketManager!.onAuthenticationFailed = () async {
-      logger.warn('[AppFlow] Socket authentication failed, doing full restart');
-      await interactiveRelogin();
-    };
   }
 
   static Future<void> interactiveRelogin() async {
@@ -127,9 +115,6 @@ class AppFlow {
 
       // bring to front and focus
       await windowManager.focus();
-
-      // optional: maximize for full visibility
-      await windowManager.maximize();
     }
 
     // present login UI to user

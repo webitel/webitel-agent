@@ -57,7 +57,6 @@ class WebitelSocket {
   void Function(String callId)? _onCallHangup;
   void Function(Map<String, dynamic> body)? onScreenRecordStart;
   void Function(Map<String, dynamic> body)? onScreenRecordStop;
-  void Function()? onAuthenticationFailed;
 
   Completer<void> _readyCompleter = Completer<void>();
 
@@ -639,10 +638,6 @@ class WebitelSocket {
     final response = await request(SocketActions.authenticationChallenge, {
       'token': _token,
     });
-
-    if (response.containsKey('error')) {
-      onAuthenticationFailed?.call();
-    }
 
     return AuthResponse.fromJson(response);
   }

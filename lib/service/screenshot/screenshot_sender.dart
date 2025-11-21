@@ -39,7 +39,7 @@ class ScreenshotSenderService {
   static const Duration _minScreenshotGap = Duration(seconds: 1);
 
   // Checker interval
-  static const Duration _checkerInterval = Duration(minutes: 3);
+  static const Duration _checkerInterval = Duration(seconds: 15);
 
   ScreenshotSenderService({required this.baseUrl});
 

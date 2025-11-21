@@ -35,10 +35,6 @@ class SocketManager {
         config: WebitelSocketConfig(url: wsUrl, baseUrl: baseUrl, token: token),
       );
 
-      _socket!.onAuthenticationFailed = () {
-        if (onAuthenticationFailed != null) onAuthenticationFailed!();
-      };
-
       await _socket!.connect();
       await _socket!.authenticate();
       await _socket!.ready;

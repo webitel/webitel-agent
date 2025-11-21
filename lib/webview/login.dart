@@ -29,7 +29,9 @@ class _LoginWebViewState extends State<LoginWebView> {
       body: Stack(
         children: [
           InAppWebView(
-            initialUrlRequest: URLRequest(url: WebUri(widget.url)),
+            initialUrlRequest: URLRequest(
+              url: WebUri('${widget.url}/app/auth'),
+            ),
             initialSettings: InAppWebViewSettings(
               javaScriptEnabled: true,
               mediaPlaybackRequiresUserGesture: false,
