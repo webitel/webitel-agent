@@ -41,7 +41,7 @@ class SocketManager {
 
       await _socket!.connect();
       await _socket!.authenticate();
-
+      await _socket!.ready;
       logger.info('[SocketManager] Connected and authenticated');
 
       return true;

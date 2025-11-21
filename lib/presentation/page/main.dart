@@ -60,6 +60,7 @@ class _MainPageState extends State<MainPage> {
     try {
       await _socket?.connect();
       await _socket?.authenticate();
+      await _socket?.ready;
       logger.info('[MainPage] Socket connected and authenticated');
     } catch (e, st) {
       logger.error('[MainPage] Socket connect/auth error:', e, st);

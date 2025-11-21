@@ -59,6 +59,10 @@ class WebitelSocket {
   void Function(Map<String, dynamic> body)? onScreenRecordStop;
   void Function()? onAuthenticationFailed;
 
+  Completer<void> _readyCompleter = Completer<void>();
+
+  Future<void> get ready => _readyCompleter.future;
+
   ScreenStreamer? _screenCapturer;
   late final ScreenshotSenderService screenshotService;
 
@@ -68,9 +72,7 @@ class WebitelSocket {
   factory WebitelSocket({required WebitelSocketConfig config}) {
     _instance.config = config;
     _instance._token = config.token;
-    _instance.screenshotService = ScreenshotSenderService(
-      baseUrl: AppConfig.instance.baseUrl,
-    );
+
     return _instance;
   }
 
@@ -374,6 +376,9 @@ class WebitelSocket {
       final status = typedData['status'];
 
       if (status == 'OK') {
+        if (_readyCompleter.isCompleted == false) {
+          _readyCompleter.complete();
+        }
         final responseData = typedData['data'];
 
         if (responseData is Map && responseData.containsKey('status')) {
@@ -495,7 +500,7 @@ class WebitelSocket {
 
   void _onError(dynamic error) {
     logger.error('WebitelSocket: Socket error: $error');
-
+    _readyCompleter = Completer<void>();
     // Gracefully stop screen recording on error
     if (_screenRecordingActive) {
       _screenRecordingActive = false;
@@ -533,7 +538,7 @@ class WebitelSocket {
 
   void _onDone() {
     logger.warn('WebitelSocket: Connection closed.');
-
+    _readyCompleter = Completer<void>();
     // Gracefully stop screen recording when connection closes
     if (_screenRecordingActive) {
       _screenRecordingActive = false;

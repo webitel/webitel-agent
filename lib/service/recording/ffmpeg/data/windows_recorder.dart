@@ -1,7 +1,5 @@
 import 'dart:io';
-
 import 'package:webitel_desk_track/core/logger.dart';
-import 'package:webitel_desk_track/service/ffmpeg_manager/ffmpeg_manager.dart';
 import 'package:webitel_desk_track/service/recording/ffmpeg/domain/platform_recorder.dart';
 
 class WindowsRecorder implements PlatformRecorder {
