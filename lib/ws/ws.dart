@@ -88,6 +88,10 @@ class WebitelSocket {
     logger.info('WebitelSocket: Token updated.');
   }
 
+  void initServices({required ScreenshotSenderService screenshot}) {
+    screenshotService = screenshot;
+  }
+
   Future<void> connect() async {
     logger.info('WebitelSocket: Connecting to ${config?.url}');
     _channel = WebSocketChannel.connect(Uri.parse(config?.url ?? ''));

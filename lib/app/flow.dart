@@ -71,6 +71,9 @@ class AppFlow {
     );
 
     final connected = await socketManager!.connectAndAuthenticate();
+
+    socketManager!.socket.initServices(screenshot: screenshotService!);
+
     if (!connected) {
       logger.error(
         '[AppFlow] Socket connect/auth failed, attempting interactive re-login',
