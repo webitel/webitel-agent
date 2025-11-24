@@ -34,7 +34,7 @@ class LoggerService {
     _logger = Logger(level: _level, printer: CustomPrettyPrinter());
 
     if (logToFile) {
-      final dir = await getApplicationSupportDirectory();
+      final dir = await getApplicationDocumentsDirectory();
       final filePath =
           logFilePath.isNotEmpty
               ? '${dir.path}/$logFilePath'
