@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/service/ffmpeg_manager/ffmpeg_manager.dart';
+import 'package:path/path.dart' as p;
 import 'package:webitel_desk_track/service/recording/ffmpeg/domain/platform_recorder.dart';
 
 class WindowsRecorder implements PlatformRecorder {
@@ -7,21 +9,26 @@ class WindowsRecorder implements PlatformRecorder {
 
   @override
   Future<void> start(String filePath) async {
-    // final ffmpegPath = await FFmpegManager.instance.path;
+    final ffmpegPath = await FFmpegManager.instance.path;
 
-    _process = await Process.start('ffmpeg', [
-      '-f', 'gdigrab', // Windows screen grabber
-      '-framerate', '15',
-      '-i', 'desktop',
-      '-vf', 'scale=1280:720',
-      '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-pix_fmt', 'yuv420p',
-      '-b:v', '5M',
-      '-movflags', '+faststart',
-      '-y',
-      filePath,
-    ], runInShell: true);
+    _process = await Process.start(
+      ffmpegPath,
+      [
+        '-f', 'gdigrab', // Windows screen grabber
+        '-framerate', '15',
+        '-i', 'desktop',
+        '-vf', 'scale=1280:720',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-pix_fmt', 'yuv420p',
+        '-b:v', '5M',
+        '-movflags', '+faststart',
+        '-y',
+        filePath,
+      ],
+      runInShell: false,
+      workingDirectory: p.dirname(ffmpegPath),
+    );
 
     logger.info('Windows recording started → $filePath');
     _process!.stderr.transform(SystemEncoding().decoder).listen(logger.info);

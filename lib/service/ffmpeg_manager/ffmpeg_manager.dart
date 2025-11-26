@@ -1,7 +1,7 @@
 import 'dart:io';
-import 'package:flutter/services.dart' show rootBundle;
-// ignore: depend_on_referenced_packages
 import 'package:path/path.dart' as p;
+
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 class FFmpegManager {
@@ -11,7 +11,11 @@ class FFmpegManager {
   String? _ffmpegPath;
 
   Future<String> get path async {
-    if (_ffmpegPath != null) return _ffmpegPath!;
+    if (_ffmpegPath != null) {
+      if (await File(_ffmpegPath!).exists()) {
+        return _ffmpegPath!;
+      }
+    }
 
     final localDir = await getApplicationSupportDirectory();
     if (!await localDir.exists()) {
@@ -32,15 +36,32 @@ class FFmpegManager {
     }
 
     final ffmpegPath = p.join(localDir.path, ffmpegFileName);
+    final ffmpegFile = File(ffmpegPath);
 
-    if (!await File(ffmpegPath).exists()) {
+    try {
       final data = await rootBundle.load(assetPath);
       final bytes = data.buffer.asUint8List();
-      await File(ffmpegPath).writeAsBytes(bytes, flush: true);
+
+      // Видалимо старий файл якщо є
+      if (await ffmpegFile.exists()) {
+        await ffmpegFile.delete();
+      }
+
+      await ffmpegFile.writeAsBytes(bytes, flush: true);
+
+      print('[FFmpegManager] Copied to: $ffmpegPath');
+      print('[FFmpegManager] File size: ${await ffmpegFile.length()} bytes');
 
       if (Platform.isMacOS) {
         await Process.run('chmod', ['+x', ffmpegPath]);
       }
+    } catch (e) {
+      print('[FFmpegManager] Error copying ffmpeg: $e');
+      rethrow;
+    }
+
+    if (!await ffmpegFile.exists()) {
+      throw Exception('FFmpeg was not copied successfully');
     }
 
     _ffmpegPath = ffmpegPath;

@@ -3,20 +3,20 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:webitel_desk_track/config/config.dart';
+import 'package:path/path.dart' as p;
 import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/service/ffmpeg_manager/ffmpeg_manager.dart';
 
 Future<String?> getStereoMixDeviceId() async {
-  // final ffmpegPath = await FFmpegManager.instance.path;
-  // logger.info('[StereoMix] Using FFmpeg at: $ffmpegPath');
+  final ffmpegPath = await FFmpegManager.instance.path;
+  logger.info('[StereoMix] Using FFmpeg at: $ffmpegPath');
 
-  final ffmpegProcess = await Process.start('ffmpeg', [
-    '-list_devices',
-    'true',
-    '-f',
-    'dshow',
-    '-i',
-    'dummy',
-  ], runInShell: true);
+  final ffmpegProcess = await Process.start(
+    ffmpegPath,
+    ['-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'],
+    runInShell: false,
+    workingDirectory: p.dirname(ffmpegPath),
+  );
 
   await for (var line in ffmpegProcess.stderr
       .transform(utf8.decoder)
@@ -40,15 +40,13 @@ Future<String?> getStereoMixDeviceId() async {
 }
 
 Future<String?> getMicrophoneDeviceId() async {
-  // final ffmpegPath = await FFmpegManager.instance.path;
-  final ffmpegProcess = await Process.start('ffmpeg', [
-    '-list_devices',
-    'true',
-    '-f',
-    'dshow',
-    '-i',
-    'dummy',
-  ], runInShell: true);
+  final ffmpegPath = await FFmpegManager.instance.path;
+  final ffmpegProcess = await Process.start(
+    ffmpegPath,
+    ['-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'],
+    runInShell: false,
+    workingDirectory: p.dirname(ffmpegPath),
+  );
 
   String? micId;
   await for (var line in ffmpegProcess.stderr
@@ -179,8 +177,13 @@ Future<Process?> startStreamingFFmpeg(
     '[Capturer] Starting FFmpeg ($mode): ffmpeg ${ffmpegArgs.join(' ')}',
   );
 
-  // final ffmpegPath = await FFmpegManager.instance.path;
-  final process = await Process.start('ffmpeg', ffmpegArgs, runInShell: true);
+  final ffmpegPath = await FFmpegManager.instance.path;
+  final process = await Process.start(
+    ffmpegPath,
+    ffmpegArgs,
+    runInShell: false,
+    workingDirectory: p.dirname(ffmpegPath),
+  );
 
   if (mode == FFmpegMode.streaming) {
     _streamingProcess = process;
