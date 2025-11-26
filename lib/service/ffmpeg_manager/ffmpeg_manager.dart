@@ -42,7 +42,6 @@ class FFmpegManager {
       final data = await rootBundle.load(assetPath);
       final bytes = data.buffer.asUint8List();
 
-      // Видалимо старий файл якщо є
       if (await ffmpegFile.exists()) {
         await ffmpegFile.delete();
       }
