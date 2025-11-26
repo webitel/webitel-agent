@@ -1,11 +1,9 @@
+import 'package:webitel_desk_track/config/model/telemetry.dart';
+
 class AppConfigModel {
   // --- Base server settings ---
   final String baseUrl;
-
-  // --- Auth ---
   final String loginUrl;
-
-  // --- WebSocket connection ---
   final String webitelWsUrl;
 
   // --- Video configuration ---
@@ -14,12 +12,8 @@ class AppConfigModel {
   final bool videoSaveLocally;
   final int maxCallRecordDuration;
 
-  // --- Logger configuration ---
-  final bool logInfo;
-  final bool logDebug;
-  final bool logError;
-  final bool logToFile;
-  final String logFilePath;
+  // --- Telemetry (unified logger + otel) ---
+  final TelemetryConfig telemetry;
 
   // --- WebRTC ---
   final String webrtcSdpUrl;
@@ -34,11 +28,7 @@ class AppConfigModel {
     required this.videoHeight,
     required this.videoSaveLocally,
     required this.maxCallRecordDuration,
-    required this.logInfo,
-    required this.logDebug,
-    required this.logError,
-    required this.logToFile,
-    required this.logFilePath,
+    required this.telemetry,
     required this.webrtcSdpUrl,
     required this.webrtcIceServers,
     required this.webrtcIceTransportPolicy,
@@ -53,38 +43,30 @@ class AppConfigModel {
       videoHeight: 720,
       videoSaveLocally: false,
       maxCallRecordDuration: 3600,
-      logInfo: false,
-      logDebug: false,
-      logError: false,
-      logToFile: false,
-      logFilePath: '/tmp/log.txt',
+      telemetry: TelemetryConfig.fromJson({}),
       webrtcSdpUrl: '',
       webrtcIceServers: const [],
       webrtcIceTransportPolicy: 'all',
     );
   }
 
-  /// --- Fixed paths (never change) ---
+  /// --- Fixed paths ---
   static const String _loginPath = '/';
-
   static const String _websocketPath =
       '/ws/websocket?application_name=desc_track&ver=1.0.0';
   static const String _sdpPath = '/api/webrtc/video';
-
-  /// ----------------------------------
 
   factory AppConfigModel.fromJson(Map<String, dynamic> json) {
     final server = json['server'] ?? {};
     final baseUrl = server['baseUrl'] ?? '';
 
-    // Helper to combine HTTPS URLs
+    // Combine URLs
     String combineUrl(String? path) {
       if (path == null || path.isEmpty) return '';
       if (path.startsWith('http')) return path;
       return '$baseUrl${path.startsWith('/') ? path : '/$path'}';
     }
 
-    // Helper to combine WebSocket URLs (convert http → ws)
     String combineWsUrl(String? path) {
       if (path == null || path.isEmpty) return '';
       if (path.startsWith('ws')) return path;
@@ -94,12 +76,9 @@ class AppConfigModel {
       return '$wsBase${path.startsWith('/') ? path : '/$path'}';
     }
 
-    final logger = json['logger'] ?? {};
+    final telemetryJson = json['telemetry'] ?? {};
     final webrtc = json['webrtc'] ?? {};
     final video = json['video'] ?? {};
-
-    bool parseBool(dynamic v, [bool d = false]) =>
-        v is bool ? v : v.toString().toLowerCase() == 'true';
 
     int parseInt(dynamic v, [int d = 0]) =>
         int.tryParse(v?.toString() ?? '') ?? d;
@@ -111,31 +90,24 @@ class AppConfigModel {
       return [];
     }
 
-    String parseTransportPolicy(dynamic v) {
-      if (v is String && v.isNotEmpty) {
-        return v;
-      }
-      return 'all'; // default value
-    }
-
     return AppConfigModel(
       baseUrl: baseUrl,
       loginUrl: combineUrl(_loginPath),
       webitelWsUrl: combineWsUrl(_websocketPath),
+
+      /// ---- video ----
       videoWidth: parseInt(video['width'], 1280),
       videoHeight: parseInt(video['height'], 720),
-      videoSaveLocally: parseBool(video['saveLocally']),
+      videoSaveLocally: video['saveLocally'] == true,
       maxCallRecordDuration: parseInt(video['maxCallRecordDuration'], 3600),
-      logInfo: parseBool(logger['info']),
-      logDebug: parseBool(logger['debug']),
-      logError: parseBool(logger['error']),
-      logToFile: parseBool(logger['toFile']),
-      logFilePath: logger['filePath'] ?? '/tmp/log.txt',
+
+      /// ---- telemetry ----
+      telemetry: TelemetryConfig.fromJson(telemetryJson),
+
+      /// ---- webrtc ----
       webrtcSdpUrl: combineUrl(_sdpPath),
       webrtcIceServers: parseIceServers(webrtc['iceServers']),
-      webrtcIceTransportPolicy: parseTransportPolicy(
-        webrtc['iceTransportPolicy'],
-      ),
+      webrtcIceTransportPolicy: webrtc['iceTransportPolicy'] ?? 'all',
     );
   }
 }
