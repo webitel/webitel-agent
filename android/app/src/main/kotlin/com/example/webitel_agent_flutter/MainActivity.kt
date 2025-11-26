@@ -1,4 +1,4 @@
-package com.example.webitel_agent_flutter
+package com.example.webitel_desk_track
 
 import io.flutter.embedding.android.FlutterActivity
 

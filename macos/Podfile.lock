@@ -13,9 +13,12 @@ PODS:
   - flutter_inappwebview_macos (0.0.1):
     - FlutterMacOS
     - OrderedSet (~> 6.0.3)
-  - flutter_webrtc (0.14.0):
+  - flutter_secure_storage_darwin (10.0.0):
+    - Flutter
     - FlutterMacOS
-    - WebRTC-SDK (= 125.6422.07)
+  - flutter_webrtc (1.2.0):
+    - FlutterMacOS
+    - WebRTC-SDK (= 137.7151.04)
   - FlutterMacOS (1.0.0)
   - OrderedSet (6.0.3)
   - path_provider_foundation (0.0.1):
@@ -30,7 +33,7 @@ PODS:
     - FlutterMacOS
   - tray_manager (0.0.1):
     - FlutterMacOS
-  - WebRTC-SDK (125.6422.07)
+  - WebRTC-SDK (137.7151.04)
   - window_manager (0.5.0):
     - FlutterMacOS
 
@@ -40,6 +43,7 @@ DEPENDENCIES:
   - ffmpeg_kit_flutter_new (from `Flutter/ephemeral/.symlinks/plugins/ffmpeg_kit_flutter_new/macos`)
   - file_selector_macos (from `Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos`)
   - flutter_inappwebview_macos (from `Flutter/ephemeral/.symlinks/plugins/flutter_inappwebview_macos/macos`)
+  - flutter_secure_storage_darwin (from `Flutter/ephemeral/.symlinks/plugins/flutter_secure_storage_darwin/darwin`)
   - flutter_webrtc (from `Flutter/ephemeral/.symlinks/plugins/flutter_webrtc/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
   - path_provider_foundation (from `Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin`)
@@ -65,6 +69,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos
   flutter_inappwebview_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/flutter_inappwebview_macos/macos
+  flutter_secure_storage_darwin:
+    :path: Flutter/ephemeral/.symlinks/plugins/flutter_secure_storage_darwin/darwin
   flutter_webrtc:
     :path: Flutter/ephemeral/.symlinks/plugins/flutter_webrtc/macos
   FlutterMacOS:
@@ -83,22 +89,23 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/window_manager/macos
 
 SPEC CHECKSUMS:
-  connectivity_plus: 0a976dfd033b59192912fa3c6c7b54aab5093802
-  desktop_screenshot: 784c90b6e35e8a979c3387966454a08de6195a05
-  ffmpeg_kit_flutter_new: f2693ef0662ecf167d8d0ed9706e12a556f9d61c
-  file_selector_macos: cc3858c981fe6889f364731200d6232dac1d812d
-  flutter_inappwebview_macos: bdf207b8f4ebd58e86ae06cd96b147de99a67c9b
-  flutter_webrtc: 3d98e6b97b60fcb758709b23ab568a1dc181e5c3
+  connectivity_plus: 4adf20a405e25b42b9c9f87feff8f4b6fde18a4e
+  desktop_screenshot: a8781f6a3ca18468bb748242493df79d27d48b5e
+  ffmpeg_kit_flutter_new: 4eb1908463948e877ff5c4f2c7bb28f2a5dfd11b
+  file_selector_macos: 6280b52b459ae6c590af5d78fc35c7267a3c4b31
+  flutter_inappwebview_macos: c2d68649f9f8f1831bfcd98d73fd6256366d9d1d
+  flutter_secure_storage_darwin: ce237a8775b39723566dc72571190a3769d70468
+  flutter_webrtc: 718eae22a371cd94e5d56aa4f301443ebc5bb737
   FlutterMacOS: 8f6f14fa908a6fb3fba0cd85dbd81ec4b251fb24
   OrderedSet: e539b66b644ff081c73a262d24ad552a69be3a94
-  path_provider_foundation: 2b6b4c569c0fb62ec74538f866245ac84301af46
-  screen_capturer_macos: e91a66e1eeefd5e4fe068bb1bffc053cc34b63b8
-  screen_retriever_macos: 776e0fa5d42c6163d2bf772d22478df4b302b161
-  shared_preferences_foundation: fcdcbc04712aee1108ac7fda236f363274528f78
-  tray_manager: 9064e219c56d75c476e46b9a21182087930baf90
-  WebRTC-SDK: dff00a3892bc570b6014e046297782084071657e
-  window_manager: e25faf20d88283a0d46e7b1a759d07261ca27575
+  path_provider_foundation: 080d55be775b7414fd5a5ef3ac137b97b097e564
+  screen_capturer_macos: 229306903c56767a7c7d3a48167ba303e95c6d29
+  screen_retriever_macos: 452e51764a9e1cdb74b3c541238795849f21557f
+  shared_preferences_foundation: 9e1978ff2562383bd5676f64ec4e9aa8fa06a6f7
+  tray_manager: a104b5c81b578d83f3c3d0f40a997c8b10810166
+  WebRTC-SDK: 40d4f5ba05cadff14e4db5614aec402a633f007e
+  window_manager: b729e31d38fb04905235df9ea896128991cad99e
 
 PODFILE CHECKSUM: 9ff5d87f23ea01c0610b44e6d7fb90382f652069
 
-COCOAPODS: 1.15.2
+COCOAPODS: 1.16.2

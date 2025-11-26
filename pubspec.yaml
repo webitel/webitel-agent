@@ -1,11 +1,10 @@
-name: webitel_agent_flutter
-description: "A new Flutter project."
+name: webitel_desk_track
+description: "Webitel Desk Track Application"
 
 version: 1.0.0+1
 
 environment:
   sdk: ^3.7.2
-
 
 dependencies:
   flutter:
@@ -13,29 +12,41 @@ dependencies:
 
   cupertino_icons: ^1.0.8
   tray_manager: ^0.5.0
+  flutter_phoenix: ^1.1.1
+  protobuf: ^5.1.0
   desktop_screenshot:
     git:
       url: https://github.com/vhunkalo/desktop_screenshot.git
-  flutter_dotenv: ^5.2.1
+  flutter_dotenv: ^6.0.0
   flutter_inappwebview: ^6.1.5
   http: ^1.4.0
   web_socket_channel: ^3.0.3
   path_provider: ^2.1.5
+  protoc_plugin: ^24.0.0
+  fixnum: ^1.1.1
   screen_capturer: ^0.2.3
   logger: ^2.6.0
-  connectivity_plus: ^6.1.4
+  connectivity_plus: ^7.0.0
   retry: ^3.1.2
-  flutter_webrtc: ^0.14.2
+  flutter_webrtc: ^1.2.1
+  grpc: ^5.0.0
   flutter_svg: ^2.2.0
   uuid: ^4.5.1
   file_selector: ^1.0.3
   shared_preferences: ^2.5.3
-  ffmpeg_kit_flutter_new: ^3.2.0
+  ffmpeg_kit_flutter_new: ^4.1.0
+  flutter_secure_storage: ^10.0.0-beta.4
+  flutter_secure_storage_windows: ^4.0.0
   mime: ^2.0.0
   http_parser: ^4.1.2
+  # flutterrific_opentelemetry: ^0.3.4
   win32: ^5.15.0
   msix: ^3.16.12
-  window_manager: ^0.5.1
+  window_manager:
+    git:
+      url: https://github.com/vhunkalo/window_manager.git
+      ref: main
+      path: packages/window_manager
 
 
 

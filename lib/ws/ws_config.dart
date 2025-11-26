@@ -2,7 +2,6 @@
 class WebitelSocketConfig {
   final String url;
   final String token;
-
   final String baseUrl;
 
   WebitelSocketConfig({
