@@ -3,6 +3,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:webitel_desk_track/core/logger.dart';
 
 class FFmpegManager {
   FFmpegManager._();
@@ -48,14 +49,13 @@ class FFmpegManager {
 
       await ffmpegFile.writeAsBytes(bytes, flush: true);
 
-      print('[FFmpegManager] Copied to: $ffmpegPath');
-      print('[FFmpegManager] File size: ${await ffmpegFile.length()} bytes');
+      logger.info('[FFmpegManager] FFmpeg copied to $ffmpegPath');
 
       if (Platform.isMacOS) {
         await Process.run('chmod', ['+x', ffmpegPath]);
       }
     } catch (e) {
-      print('[FFmpegManager] Error copying ffmpeg: $e');
+      logger.error('[FFmpegManager] Failed to copy FFmpeg: $e');
       rethrow;
     }
 
