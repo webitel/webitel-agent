@@ -16,14 +16,12 @@ class FileLogConfig {
 }
 
 class OTelConfig {
-  final bool enabled;
   final String endpoint;
   final String serviceName;
   final String environment;
   final bool exportLogs;
 
   OTelConfig({
-    required this.enabled,
     required this.endpoint,
     required this.serviceName,
     required this.environment,
@@ -33,7 +31,6 @@ class OTelConfig {
   factory OTelConfig.fromJson(Map<String, dynamic>? json) {
     json ??= {};
     return OTelConfig(
-      enabled: json['enabled'] == true,
       endpoint: json['endpoint'] ?? '',
       serviceName: json['serviceName'] ?? 'app',
       environment: json['environment'] ?? 'prod',

@@ -56,9 +56,7 @@ class LoggerService {
     }
 
     // OTEL LOGS CLIENT
-    if (_telemetry?.otel.enabled == true &&
-        _telemetry!.otel.endpoint.isNotEmpty &&
-        _telemetry!.otel.exportLogs) {
+    if (_telemetry!.otel.endpoint.isNotEmpty && _telemetry!.otel.exportLogs) {
       _otelClient = OtelLogClient(_telemetry!.otel.endpoint);
     }
 
