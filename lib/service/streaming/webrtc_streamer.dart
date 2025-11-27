@@ -198,7 +198,6 @@ class ScreenStreamer {
   }
 
   /// METRICS MONITOR
-  /// METRICS MONITOR
   void _startMetricsMonitor() {
     _statsTimer?.cancel();
 
