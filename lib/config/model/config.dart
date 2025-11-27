@@ -19,6 +19,7 @@ class AppConfigModel {
   final String webrtcSdpUrl;
   final List<Map<String, dynamic>> webrtcIceServers;
   final String webrtcIceTransportPolicy;
+  final bool webrtcEnableMetrics;
 
   AppConfigModel({
     required this.baseUrl,
@@ -32,6 +33,7 @@ class AppConfigModel {
     required this.webrtcSdpUrl,
     required this.webrtcIceServers,
     required this.webrtcIceTransportPolicy,
+    required this.webrtcEnableMetrics,
   });
 
   factory AppConfigModel.empty() {
@@ -47,6 +49,7 @@ class AppConfigModel {
       webrtcSdpUrl: '',
       webrtcIceServers: const [],
       webrtcIceTransportPolicy: 'all',
+      webrtcEnableMetrics: false,
     );
   }
 
@@ -108,6 +111,7 @@ class AppConfigModel {
       webrtcSdpUrl: combineUrl(_sdpPath),
       webrtcIceServers: parseIceServers(webrtc['iceServers']),
       webrtcIceTransportPolicy: webrtc['iceTransportPolicy'] ?? 'all',
+      webrtcEnableMetrics: webrtc['enableMetrics'] == true,
     );
   }
 }

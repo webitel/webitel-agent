@@ -20,6 +20,7 @@ class ScreenStreamer {
   final OnAccept onAccept;
 
   RTCPeerConnection? _pc;
+  Timer? _statsTimer;
 
   ScreenStreamer({
     required this.id,
@@ -67,11 +68,6 @@ class ScreenStreamer {
       );
     } else {
       localStream = await captureDesktopScreen();
-      // if (localStream != null) {
-      //   for (final track in localStream.getTracks()) {
-      //     await pc.addTrack(track, localStream);
-      //   }
-      // }
     }
 
     final screenStreamer = ScreenStreamer(
@@ -118,12 +114,22 @@ class ScreenStreamer {
             '[ScreenStreamer] Peer connection failed/closed, restarting ICE...',
           );
 
+          if (AppConfig.instance.webrtcEnableMetrics) {
+            /// Stop metrics
+            _statsTimer?.cancel();
+            _statsTimer = null;
+          }
           await _pc?.restartIce();
         }
       };
       _pc!.onIceConnectionState = (state) async {
         if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
           await stopStereoAudioFFmpeg(FFmpegMode.streaming);
+          if (AppConfig.instance.webrtcEnableMetrics) {
+            /// Stop metrics
+            _statsTimer?.cancel();
+            _statsTimer = null;
+          }
         }
         logger.debug('[ScreenStreamer] ICE connection state: $state');
       };
@@ -162,6 +168,11 @@ class ScreenStreamer {
       );
 
       await waitForIceGatheringComplete(_pc!);
+
+      if (AppConfig.instance.webrtcEnableMetrics) {
+        // START METRICS
+        _startMetricsMonitor();
+      }
     } catch (e, st) {
       logger.error('[ScreenStreamer] Failed to start:', e, st);
       close('Exception during start: $e');
@@ -186,8 +197,202 @@ class ScreenStreamer {
     return await _pc?.getLocalDescription();
   }
 
+  /// METRICS MONITOR
+  /// METRICS MONITOR
+  void _startMetricsMonitor() {
+    _statsTimer?.cancel();
+
+    // --- PERSISTENT STATE FOR CALCULATIONS ---
+    // We need to store previous cumulative values to calculate 'rate' metrics (per second).
+    int? prevBytesSent = 0;
+    double? prevTotalEncodeTime = 0.0;
+    int? prevFramesEncoded = 0;
+    DateTime? prevTime = DateTime.now();
+    // ------------------------------------------
+
+    _statsTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      final pc = _pc;
+      if (pc == null) return;
+
+      // ----------------------------
+      // METRICS - Initialize for each interval
+      // ----------------------------
+      double? fps;
+      int? width;
+      int? height;
+
+      // outbound-rtp video
+      int? framesSent;
+      int? framesEncoded;
+      double? encodeTimeTotal;
+      int? keyFrames;
+      int? packetsSent;
+      int? bytesSent;
+      int? nack;
+      int? pli;
+      int? fir;
+      int? targetBitrate; // The bitrate requested by the encoder/sender
+
+      // candidate-pair & transport
+      double? rtt;
+      int? bytesReceived;
+      bool? writable;
+      bool? nominated;
+      String? iceState;
+
+      try {
+        final reports = await pc.getStats();
+
+        for (final report in reports) {
+          switch (report.type) {
+            // -------------------------------------------
+            // MEDIA SOURCE — FPS + RESOLUTION (Source data)
+            // -------------------------------------------
+            case 'media-source':
+              if (report.values['kind'] == 'video') {
+                fps = (report.values['framesPerSecond'] as num?)?.toDouble();
+                width = report.values['width'];
+                height = report.values['height'];
+              }
+              break;
+
+            // -------------------------------------------
+            // TRACK (Sender/Receiver data)
+            // -------------------------------------------
+            case 'track':
+              if (report.values['kind'] == 'video') {
+                // Prefer 'framesSentPerSecond' from track report if available (more reliable for actual sending rate)
+                fps =
+                    (report.values['framesSentPerSecond'] as num?)
+                        ?.toDouble() ??
+                    fps;
+              }
+              break;
+
+            // -------------------------------------------
+            // OUTBOUND RTP (Sending stats, encoding performance)
+            // FIX: Changed 'mediaType' to 'kind' based on log inspection.
+            // -------------------------------------------
+            case 'outbound-rtp':
+              if (report.values['kind'] == 'video') {
+                // FIXED FILTERING
+                framesSent = report.values['framesSent'];
+                framesEncoded = report.values['framesEncoded'];
+                encodeTimeTotal =
+                    (report.values['totalEncodeTime'] as num?)?.toDouble();
+                keyFrames = report.values['keyFramesEncoded'];
+                packetsSent = report.values['packetsSent'];
+                bytesSent = report.values['bytesSent'];
+                nack = report.values['nackCount'];
+                pli = report.values['pliCount'];
+                fir = report.values['firCount'];
+                // Cast targetBitrate safely as it might be a double in the report
+                targetBitrate =
+                    (report.values['targetBitrate'] as num?)?.toInt();
+              }
+              break;
+
+            // -------------------------------------------
+            // CANDIDATE PAIR — RTT + network health
+            // -------------------------------------------
+            case 'candidate-pair':
+              // Prioritize the stats from the 'nominated' or 'succeeded' pair.
+              if (report.values['state'] == 'succeeded' &&
+                  (report.values['nominated'] == true || rtt == null)) {
+                rtt =
+                    (report.values['currentRoundTripTime'] as num?)?.toDouble();
+
+                // Note: bytesReceived from candidate-pair is the total for the transport layer,
+                // which is a good proxy for overall received data.
+                bytesReceived = report.values['bytesReceived'];
+                writable = report.values['writable'];
+                nominated = report.values['nominated'];
+                iceState = report.values['state'];
+              }
+              break;
+
+            // -------------------------------------------
+            // TRANSPORT (Fallback for reliable bytesReceived)
+            // -------------------------------------------
+            case 'transport':
+              // Use transport bytes received if candidate-pair didn't provide it reliably
+              bytesReceived = report.values['bytesReceived'] ?? bytesReceived;
+              break;
+          }
+        }
+
+        // -------------------------------------------
+        // CALCULATIONS (Rate-based metrics)
+        // -------------------------------------------
+        double? actualBitrateKbps;
+        double? avgEncodeTimePerFrameMs;
+        final currentTime = DateTime.now();
+        // Calculate the time difference (in seconds) since the last run
+        final timeDiffSec =
+            currentTime.difference(prevTime!).inMilliseconds / 1000.0;
+
+        // 1. Actual Outgoing Bitrate (kbps)
+        if (bytesSent != null && prevBytesSent != null && timeDiffSec > 0) {
+          final bytesSentDiff = bytesSent - prevBytesSent!;
+          // Formula: (Bytes Diff * 8 bits/byte) / (Time Diff in seconds) / 1024 to convert to kbps
+          actualBitrateKbps = (bytesSentDiff * 8) / timeDiffSec / 1024;
+        }
+
+        // 2. Average Encode Time per Frame (ms/frame)
+        if (encodeTimeTotal != null &&
+            prevTotalEncodeTime != null &&
+            framesEncoded != null &&
+            prevFramesEncoded != null) {
+          final encodeTimeDiff = encodeTimeTotal - prevTotalEncodeTime!;
+          final framesEncodedDiff = framesEncoded - prevFramesEncoded!;
+
+          if (framesEncodedDiff > 0) {
+            // Formula: (Time Diff in seconds / Frames Encoded Diff) * 1000 ms/sec
+            avgEncodeTimePerFrameMs =
+                (encodeTimeDiff / framesEncodedDiff) * 1000;
+          }
+        }
+
+        // Update persistent values for the next calculation
+        prevBytesSent = bytesSent;
+        prevTotalEncodeTime = encodeTimeTotal;
+        prevFramesEncoded = framesEncoded;
+        prevTime = currentTime;
+
+        // -------------------------------------------
+        // LOG RESULT (Formatted Output)
+        // -------------------------------------------
+        logger.debug(
+          '[Metrics|STREAM] '
+          'FPS=${fps ?? "?"} '
+          'res=${width ?? "?"}x${height ?? "?"} '
+          'frames(S/E)=${framesSent ?? "?"}/${framesEncoded ?? "?"} '
+          'encT(total)=${encodeTimeTotal != null ? (encodeTimeTotal * 1000).toStringAsFixed(1) : "?"}ms '
+          'encT(avg)=${avgEncodeTimePerFrameMs != null ? avgEncodeTimePerFrameMs.toStringAsFixed(1) : "?"}ms/frame '
+          'key=$keyFrames '
+          '↑pkts=$packetsSent '
+          '↑bytes=$bytesSent ↓bytes=$bytesReceived '
+          'targetBitrate=${targetBitrate != null ? (targetBitrate / 1000).toStringAsFixed(0) : "?"}k '
+          'ACTUAL_BITRATE=${actualBitrateKbps != null ? actualBitrateKbps.toStringAsFixed(0) : "?"}kbps '
+          'nack=$nack pli=$pli fir=$fir '
+          'RTT=${rtt != null ? (rtt * 1000).toStringAsFixed(1) : "?"}ms '
+          'ICE=$iceState writable=$writable nominated=$nominated',
+        );
+      } catch (e, st) {
+        logger.error('[Metrics] Failed to get stats', e, st);
+      }
+    });
+  }
+
   void close(String reason) {
     logger.warn('[ScreenStreamer] Closing: $reason');
+
+    if (AppConfig.instance.webrtcEnableMetrics) {
+      /// Stop metrics
+      _statsTimer?.cancel();
+      _statsTimer = null;
+    }
+
     stopStereoAudioFFmpeg(FFmpegMode.streaming);
 
     try {
