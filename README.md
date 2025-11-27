@@ -1,7 +1,3 @@
-Звичайно, ось оновлений `README.md` **англійською мовою**, де всі URL-адреси/хости замінені на тестові.
-
------
-
 # 🖥 Webitel-Agent
 
 Cross-platform desktop application (Windows/macOS/Linux) for Webitel call center integration.
