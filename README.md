@@ -59,7 +59,7 @@ Use the **"Upload configuration"** option in the tray menu to manually load your
   "webrtc": {
     "iceServers": [],
     "iceTransportPolicy": "all",
-    "enableMetrics": true // <-- NEW: Enable WebRTC performance logging
+    "enableMetrics": true
   },
   "video": {
     "width": 1920,
