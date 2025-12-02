@@ -27,10 +27,10 @@ class FFmpegManager {
     String ffmpegFileName;
 
     if (Platform.isWindows) {
-      assetPath = 'ffmpeg/windows/ffmpeg.exe';
+      assetPath = 'assets/ffmpeg/windows/ffmpeg.exe';
       ffmpegFileName = 'ffmpeg.exe';
     } else if (Platform.isMacOS) {
-      assetPath = 'ffmpeg/macos/ffmpeg';
+      assetPath = 'assets/ffmpeg/windows/ffmpeg.exe';
       ffmpegFileName = 'ffmpeg';
     } else {
       throw UnsupportedError('Platform not supported');
