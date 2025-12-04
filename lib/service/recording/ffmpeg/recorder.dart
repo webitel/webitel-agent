@@ -28,7 +28,7 @@ class LocalVideoRecorder implements Recorder {
     required this.callId,
     required this.agentToken,
     required this.baseUrl,
-    this.channel = 'screensharing',
+    this.channel = 'screenrecording',
   }) {
     _uploadService = VideoUploadService(
       baseUrl: baseUrl,

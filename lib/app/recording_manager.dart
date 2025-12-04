@@ -60,7 +60,7 @@ class RecordingManager {
               callId: recordingId,
               agentToken: token,
               baseUrl: appConfig.baseUrl,
-              channel: 'screensharing',
+              channel: 'screenrecording',
             )
             : StreamRecorder(
               callId: recordingId,

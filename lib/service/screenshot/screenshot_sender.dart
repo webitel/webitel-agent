@@ -265,7 +265,6 @@ class ScreenshotSenderService {
     try {
       Uint8List? bytes;
       final agentToken = await _secureStorage.readAccessToken() ?? 'unknown';
-      const channel = 'screenshot';
       final agentId = await _secureStorage.readAgentId() ?? 'unknown_user';
 
       final nowTs = DateTime.now();
@@ -336,7 +335,7 @@ class ScreenshotSenderService {
         '$baseUrl/api/storage/file/$agentId/upload',
       ).replace(
         queryParameters: {
-          'channel': channel,
+          'channel': "screenrecording",
           'access_token': agentToken,
           'thumbnail': 'true',
           'name': filename,
