@@ -9,6 +9,7 @@ class AppConfigModel {
   // --- Video configuration ---
   final int videoWidth;
   final int videoHeight;
+  final int framerate = 30;
   final bool videoSaveLocally;
   final int maxCallRecordDuration;
 
@@ -27,6 +28,7 @@ class AppConfigModel {
     required this.webitelWsUrl,
     required this.videoWidth,
     required this.videoHeight,
+    required this.framerate,
     required this.videoSaveLocally,
     required this.maxCallRecordDuration,
     required this.telemetry,
@@ -43,6 +45,7 @@ class AppConfigModel {
       webitelWsUrl: '',
       videoWidth: 1280,
       videoHeight: 720,
+      framerate: 30,
       videoSaveLocally: false,
       maxCallRecordDuration: 3600,
       telemetry: TelemetryConfig.fromJson({}),
@@ -101,6 +104,7 @@ class AppConfigModel {
       /// ---- video ----
       videoWidth: parseInt(video['width'], 1280),
       videoHeight: parseInt(video['height'], 720),
+      framerate: parseInt(video['framerate'], 30),
       videoSaveLocally: video['saveLocally'] == true,
       maxCallRecordDuration: parseInt(video['maxCallRecordDuration'], 3600),
 

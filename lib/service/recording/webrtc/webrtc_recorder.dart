@@ -84,7 +84,7 @@ class StreamRecorder implements Recorder {
           }
           params.encodings![0].maxBitrate = 4_000_000;
           params.encodings![0].minBitrate = 500_000;
-          params.encodings![0].maxFramerate = 30;
+          params.encodings![0].maxFramerate = AppConfig.instance.framerate;
           params.encodings![0].scaleResolutionDownBy = 1.0;
           params.degradationPreference =
               RTCDegradationPreference.MAINTAIN_RESOLUTION;
