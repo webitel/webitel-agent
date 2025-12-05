@@ -9,7 +9,7 @@ class AppConfigModel {
   // --- Video configuration ---
   final int videoWidth;
   final int videoHeight;
-  final int framerate = 30;
+  final int framerate;
   final bool videoSaveLocally;
   final int maxCallRecordDuration;
 
