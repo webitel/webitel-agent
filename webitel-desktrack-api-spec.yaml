@@ -1,74 +1,133 @@
 # =========================================================================
 # API SPECIFICATION: WEBITEL DESKTRACK v1.1.0
-# Core: Unified WebRTC Media & WebSocket Signaling
+# Core: Monitoring, Multi-Platform Capture & Unified WebRTC Transport
 # =========================================================================
 
 info:
   name: "Webitel DeskTrack"
   version: "1.1.0"
   protocols: [HTTPS, WSS, WebRTC]
-  security: { header: "X-Webitel-Access", dependencies:: "All HTTPS requests and WebSocket handshakes must include this token." }
+  security: { header: "X-Webitel-Access", description:: "All HTTPS requests and WebSocket handshakes must include this token." }
 
 # -------------------------------------------------------------------------
-# 1. WEBRTC MEDIA ENGINE (Live & Recording)
+# 1. SCREENSHOT SERVICE (Automated Background Capture)
+# -------------------------------------------------------------------------
+screenshot_service:
+  logic:
+    checker: "Polling agentId/permissions/interval every 15s"
+    scheduling: "Dynamic Timer based on 'screenshot_interval' (mins)"
+    execution:
+      guards: ["_screenshotInProgress (concurrent lock)", "_minScreenshotGap (1s)"]
+      platforms:
+        windows: "DesktopScreenshot (direct bytes)"
+        macos: "ScreenCapturer (temp file path + file read)"
+
+  upload_api:
+    path: "/api/storage/file/{agentId}/upload"
+    method: "POST"
+    headers: { Content-Type: "image/png" }
+    query:
+      channel: "screensharing"
+      name: "scr_ss_{agentId}_{YYYY-MM-DD}_{HH-mm-ss}.png"
+      thumbnail: "true"
+
+# -------------------------------------------------------------------------
+# 2. WEBRTC MEDIA ENGINE (Live Streaming)
 # -------------------------------------------------------------------------
 webrtc_engine:
-  signaling_endpoint: "/api/webrtc/video"
+  video:
+    codec: "VP8 / H.264 (Baseline/Main)"
+    params: { res: "1280x720", fps: 15, bitrate: "5Mbps", flags: "+faststart" }
+    logic:
+      win: "FFmpeg (gdigrab) - captureAllDesktopScreensWindows"
+      mac: "Native ScreenCapturer - captureDesktopScreen"
 
-  sdp_workflow:
-    initiation: "POST /api/webrtc/video (SDP Offer -> Answer)"
-    termination: "DELETE /api/webrtc/video (Teardown session)"
-    ice_policy: { gather: "all", timeout: "10s", stun_turn: "dynamic_config" }
-
-  video_stream:
-    codecs: ["VP8", "H.264 Baseline/Main"]
-    params: { res: "1280x720", fps: 15, bitrate: "5Mbps", pix_fmt: "yuv420p" }
-    engine: { win: "FFmpeg/gdigrab", mac: "Native ScreenCapturer" }
-
-  audio_data_channel:
+  audio_transport:
+    method: "WebRTC DataChannel (Binary Stream)"
     label: "audio_stream"
-    protocol: "WebRTC DataChannel (Reliable/Unordered)"
-    format: "MP3 (libmp3lame) via binary stdout pipe"
-    streaming: { chunk_size: "4096B", sample_rate: "44.1kHz", bitrate: "48kbps" }
-    mixing: "FFmpeg amix (System Audio + Mic Input)"
+    protocol: "Reliable / Unordered"
+    format: "MP3 (via libmp3lame)"
+    parameters:
+      bitrate: "48kbps"
+      sampling_rate: "44.1kHz"
+      chunk_size: "4096 Bytes"
+    mixing_logic:
+      filter: "amix=inputs=2:duration=first"
+      sources:
+        - "Stereo Mix (Windows System Sound / Loopback / User Microphone)"
+        - "Microphone (Dshow / AVFoundation)"
+      pipe: "FFmpeg stdout -> Binary DataChannel Message"
 
-  telemetry: [bitrate, fps, rtt, packet_loss, nack_pli_count]
+  telemetry:
+    interval: "1s"
+    metrics: ["ACTUAL_BITRATE", "AVG_ENCODE_TIME", "RTT", "ICE_STATE", "NACK/PLI"]
 
 # -------------------------------------------------------------------------
-# 2. WEBSOCKET PROTOCOL (WSS Control Plane)
+# 3. WEBSOCKET PROTOCOL (State Machine & Control)
 # -------------------------------------------------------------------------
 websocket:
   endpoint: "wss://{domain}/ws/websocket"
 
-  inbound:
-    hello: "Connection handshake & auth handshake trigger"
-    agent_status: "Presence sync (online, offline, pause)"
-    call:
-      events: [ringing, update, hangup]
-      trigger: "Start WebRTC session if 'record_screen: true'"
-    channel:
-      status: [missed, waiting, wrap_time]
-      logic: "Maintain capture during 'Post-Processing' (has_reporting: true)"
-    notification:
-      commands: [screen_share, screenshot, screen_record_start, screen_record_stop]
-      ack_required: true
+  state_management:
+    sync: "PeriodicStateCheck (5s) for activeCalls & postProcessing"
+    queuing: "Sequential 'seq' increment with 5ms dispatch pacing"
+    resilience: "Exponential backoff (5s); Force-stop on connectivity:none"
 
-  outbound:
-    auth: { action: "authentication_challenge", token: "string" }
-    session: { action: "agent_session", desc: "Context recovery" }
-    ack: { ack_id: "uuid", error: "string?" }
-    ss_accept: { sdp: "local_answer", target_id: "manager_id" }
+  event_matrix:
+    inbound:
+      hello: "Auth challenge trigger"
+      call:
+        ringing: "Checks record_screen:true -> Starts screen recording"
+        hangup: "Removes callId from active list"
+      channel:
+        logic: "Tracks has_reporting (Wrap-up time)"
+        exit_states: ["missed", "waiting", "wrap_time"]
+      notification:
+        actions: [screen_share, screenshot, screen_record_start, screen_record_stop]
+        ack: "Mandatory response via ack_id"
 
-  resilience:
-    queue: "Sequential 'seq' dispatch with 5ms pacing"
-    recovery: "Exponential backoff (5s); Force-stop on OS 'network: none'"
+    outbound:
+      auth: { action: "authentication_challenge", token: "string" }
+      session: { action: "agent_session", desc: "AgentID recovery" }
+      ss_accept: { action: "ss_accept", sdp: "answer", to_user_id: "id" }
 
 # -------------------------------------------------------------------------
-# 3. PERSISTENCE (REST Storage)
+# 4. LOCAL RECORDING & FFmpeg PIPELINE
 # -------------------------------------------------------------------------
-storage_api:
-  path: "/api/storage/file/{id}/upload"
-  methods:
-    POST_PNG: "Snapshot upload via PeriodicScreenshotService"
-    POST_MP4: "Multipart session recording upload (Retry: 3x, Delay: 2s)"
-  params: { channel: "screensharing", thumbnail: true, access_token: "string" }
+recording_engine:
+  # --- Windows Logic: GDI & DirectShow ---
+  windows_logic:
+    video_provider: "gdigrab (Desktop capture)"
+    audio_provider: "dshow (DirectShow)"
+    audio_capture:
+      system_audio: "Stereo Mix (Realtek/Virtual Audio Loopback)"
+      user_audio: "Microphone (Physical input device)"
+    pipeline_params:
+      v_codec: "libx264 (H.264 Software Encoder)"
+      preset: "ultrafast (Minimize CPU overhead)"
+      bitrate: "5M"
+      framerate: 15
+      pix_fmt: "yuv420p"
+      flags: "+faststart (Enables instant playback/streaming of MP4)"
+    mixing_logic:
+      filter: "amix=inputs=2:duration=first"
+      desc: "Combines Stereo Mix and Mic into a single stereo output track."
+
+  # --- macOS Logic: AVFoundation & Hardware Accel ---
+  macos_logic:
+    video_provider: "avfoundation (Native framework)"
+    discovery:
+      command: "ffmpeg -f avfoundation -list_devices true -i 0"
+      logic: "Regex parsing of [index] Capture screen to identify active monitors."
+    hardware_accel: "h264_videotoolbox (Apple Silicon/Intel Hardware Encoder)"
+
+    multi_monitor_processing:
+      single_screen: "scale=1280:720"
+      multi_screen_hstack:
+        logic: "Scaling each input to 1280x720 and horizontally stacking (hstack)."
+        filter_complex: "[0:v]scale=1280:720[v0];[1:v]scale=1280:720[v1];[v0][v1]hstack=inputs=2"
+
+    pipeline_params:
+      pix_fmt: "nv12 (Native macOS pixel format)"
+      output_pix_fmt: "yuv420p (Cross-platform compatibility)"
+      movflags: "+faststart"
