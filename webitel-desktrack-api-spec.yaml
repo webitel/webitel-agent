@@ -1,86 +1,74 @@
 # =========================================================================
 # API SPECIFICATION: WEBITEL DESKTRACK v1.1.0
-# Core: Monitoring, Screen Capture & WebRTC Signaling
+# Core: Unified WebRTC Media & WebSocket Signaling
 # =========================================================================
 
 info:
   name: "Webitel DeskTrack"
+  version: "1.1.0"
   protocols: [HTTPS, WSS, WebRTC]
-  auth:
-    header: "X-Webitel-Access"
-    description:: "All HTTPS requests and WebSocket handshakes must include this token."
+  security: { header: "X-Webitel-Access", dependencies:: "All HTTPS requests and WebSocket handshakes must include this token." }
 
 # -------------------------------------------------------------------------
-# 1. REST API: CONFIGURATION & ASSETS
+# 1. WEBRTC MEDIA ENGINE (Live & Recording)
 # -------------------------------------------------------------------------
-rest_api:
-  config:
-    - path: "/api/call_center/agents"
-      method: "GET"
-      query: { id: "int", fields: "screen_control", page: 1, size: 1 }
-      desc: "Validates agent monitoring permissions (screen_control: bool)."
+webrtc_engine:
+  signaling_endpoint: "/api/webrtc/video"
 
-    - path: "/api/settings"
-      method: "GET"
-      query: { name: "screenshot_interval" }
-      desc: "Global polling interval for automated screen capture."
+  sdp_workflow:
+    initiation: "POST /api/webrtc/video (SDP Offer -> Answer)"
+    termination: "DELETE /api/webrtc/video (Teardown session)"
+    ice_policy: { gather: "all", timeout: "10s", stun_turn: "dynamic_config" }
 
-  storage:
-    - path: "/api/storage/file/{agentId}/upload"
-      method: "POST"
-      content_type: "image/png"
-      params: { channel: "screensharing", thumbnail: bool, name: "string" }
-      desc: "Binary PNG upload for periodic snapshots."
+  video_stream:
+    codecs: ["VP8", "H.264 Baseline/Main"]
+    params: { res: "1280x720", fps: 15, bitrate: "5Mbps", pix_fmt: "yuv420p" }
+    engine: { win: "FFmpeg/gdigrab", mac: "Native ScreenCapturer" }
 
-    - path: "/api/storage/file/{callId}/upload"
-      method: "POST"
-      content_type: "multipart/form-data"
-      params: { channel: "screensharing", start_time: "ts", end_time: "ts" }
-      desc: "Final MP4 session recording upload (3-attempt retry policy)."
+  audio_data_channel:
+    label: "audio_stream"
+    protocol: "WebRTC DataChannel (Reliable/Unordered)"
+    format: "MP3 (libmp3lame) via binary stdout pipe"
+    streaming: { chunk_size: "4096B", sample_rate: "44.1kHz", bitrate: "48kbps" }
+    mixing: "FFmpeg amix (System Audio + Mic Input)"
+
+  telemetry: [bitrate, fps, rtt, packet_loss, nack_pli_count]
 
 # -------------------------------------------------------------------------
-# 2. WEBRTC & MEDIA SPECIFICATIONS
-# -------------------------------------------------------------------------
-media_engine:
-  signaling:
-    path: "/api/webrtc/video"
-    methods:
-      POST: "SDP Offer/Answer exchange for live streaming."
-      DELETE: "Termination of media listener & file finalization."
-
-  stack:
-    video: "VP8 / H.264 (Baseline/Main) | Target: 1280x720 @ 15fps"
-    audio: "Opus (WebRTC) / MP3 (Local) | 48kHz Stereo"
-    capture:
-      win: "FFmpeg (gdigrab + dshow) | amix (Mic + System)"
-      mac: "Native ScreenCapturer"
-
-  metrics: [bitrate, fps, rtt, packet_loss, resolution]
-
-# -------------------------------------------------------------------------
-# 3. WEBSOCKET PROTOCOL (WSS)
+# 2. WEBSOCKET PROTOCOL (WSS Control Plane)
 # -------------------------------------------------------------------------
 websocket:
   endpoint: "wss://{domain}/ws/websocket"
 
-  inbound_events:
-    hello: "Connection handshake & auth challenge trigger."
-    agent_status: "Presence updates (online, offline, pause)."
+  inbound:
+    hello: "Connection handshake & auth handshake trigger"
+    agent_status: "Presence sync (online, offline, pause)"
     call:
-      triggers: ["ringing", "update", "hangup"]
-      logic: "Start capture if record_screen == true."
+      events: [ringing, update, hangup]
+      trigger: "Start WebRTC session if 'record_screen: true'"
     channel:
-      logic: "Post-processing (Wrap-up) tracking via 'wrap_time' status."
+      status: [missed, waiting, wrap_time]
+      logic: "Maintain capture during 'Post-Processing' (has_reporting: true)"
     notification:
-      actions: ["screen_share", "screenshot", "screen_record_start", "screen_record_stop"]
-      req_ack: true
+      commands: [screen_share, screenshot, screen_record_start, screen_record_stop]
+      ack_required: true
 
-  outbound_actions:
-    authentication_challenge: { token: "string" }
-    agent_session: "Recovery of agent context."
+  outbound:
+    auth: { action: "authentication_challenge", token: "string" }
+    session: { action: "agent_session", desc: "Context recovery" }
     ack: { ack_id: "uuid", error: "string?" }
-    ss_accept: { id: "uuid", sdp: "sdp_answer", to_user_id: "int" }
+    ss_accept: { sdp: "local_answer", target_id: "manager_id" }
 
-  system_logic:
-    sequence: "Sequential 'seq' increment with 5ms interval queue."
-    resilience: "Exponential backoff (5s); Auto-stop on network loss."
+  resilience:
+    queue: "Sequential 'seq' dispatch with 5ms pacing"
+    recovery: "Exponential backoff (5s); Force-stop on OS 'network: none'"
+
+# -------------------------------------------------------------------------
+# 3. PERSISTENCE (REST Storage)
+# -------------------------------------------------------------------------
+storage_api:
+  path: "/api/storage/file/{id}/upload"
+  methods:
+    POST_PNG: "Snapshot upload via PeriodicScreenshotService"
+    POST_MP4: "Multipart session recording upload (Retry: 3x, Delay: 2s)"
+  params: { channel: "screensharing", thumbnail: true, access_token: "string" }
