@@ -131,3 +131,30 @@ recording_engine:
       pix_fmt: "nv12 (Native macOS pixel format)"
       output_pix_fmt: "yuv420p (Cross-platform compatibility)"
       movflags: "+faststart"
+
+
+# -------------------------------------------------------------------------
+# 5. OBSERVABILITY & TELEMETRY (OpenTelemetry)
+# -------------------------------------------------------------------------
+observability:
+  engine: "OpenTelemetry (OTel) Collector"
+  transport: "gRPC (Insecure channel for internal networks)"
+  service_name: "webitel-desk-track"
+
+  logging_stack:
+    client: "OtelLogClient (Protobuf/gRPC)"
+    proto_definitions:
+      - "opentelemetry.proto.collector.logs.v1"
+      - "opentelemetry.proto.logs.v1"
+    resource_attributes:
+      service.name: "webitel-desk-track"
+      deployment.environment: "production" # dynamic
+
+  log_record_structure:
+    timestamp: "UnixNano (DateTime.now().microsecondsSinceEpoch * 1000)"
+    body: "AnyValue (String message)"
+    severity: ["INFO", "WARN", "ERROR", "DEBUG"]
+
+  export_logic:
+    method: "export(ExportLogsServiceRequest)"
+    error_handling: "Silent fail with local logger fallback to avoid recursion"
