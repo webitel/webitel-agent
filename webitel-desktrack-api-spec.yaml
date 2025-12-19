@@ -109,12 +109,71 @@ webrtc_media_specs:
     - "Packet Loss / NACK / PLI counts"
     - "Resolution (Width x Height)"
 
+
+# =========================================================================
+# VIDEO RECORDING & UPLOAD SPECIFICATION
+# Components: FFmpeg Capture, Audio Mixing, and Multipart REST Upload
+# =========================================================================
+
+video_processing_logic:
+
+  # --- LOCAL RECORDING (Windows FFmpeg) ---
+  local_capture_engine:
+    provider: "FFmpeg (gdigrab for video / dshow for audio)"
+    video_parameters:
+      codec: "libx264"
+      preset: "ultrafast"
+      framerate: 15
+      resolution: "1280x720"
+      pixel_format: "yuv420p"
+      bitrate: "5M"
+      flags: "+faststart" # Optimizes MP4 for web streaming
+    audio_mixing:
+      filter: "amix=inputs=2"
+      sources:
+        - "Stereo Mix (System Audio Output)"
+        - "Microphone (User Voice Input)"
+      output_codec: "libmp3lame (MP3)"
+      sample_rate: "44100Hz"
+      bitrate: "48k"
+
+  # --- REAL-TIME AUDIO STREAMING ---
+  realtime_audio_transport:
+    protocol: "WebRTC DataChannel"
+    mimetype: "audio/mp3"
+    streaming_logic: "Binary stdout pipe from FFmpeg to DataChannel"
+    chunk_size: "4096 bytes"
+
+# -------------------------------------------------------------------------
+# REST API: MULTIPART VIDEO UPLOAD
+# -------------------------------------------------------------------------
+video_upload_api:
+  path: "/api/storage/file/{callId}/upload"
+  method: "POST"
+  description: "Uploads the final MP4 recording file to Webitel Storage"
+  headers:
+    X-Webitel-Access: "Required (Agent Token)"
+    Content-Type: "multipart/form-data"
+  path_parameters:
+    callId: "UUID - Session or Call identifier"
+  query_parameters:
+    channel: "screensharing (Fixed)"
+    access_token: "Storage access token"
+    thumbnail: "true (Triggers server-side preview generation)"
+    start_time: "Unix Timestamp in ms (Recording Start)"
+    end_time: "Unix Timestamp in ms (Recording End)"
+  multipart_payload:
+    file: "The .mp4 binary file"
+  reliability:
+    retry_policy: "3 attempts"
+    delay_between_retries: "2 seconds"
+
+
 # =========================================================================
 # SECTION: WEBSOCKET PROTOCOL DETAILS (WSS)
 # Protocol: JSON over Secure WebSockets
 # Endpoint: wss://{domain}/ws/websocket
 # =========================================================================
-
 websocket_protocol:
 
   # -----------------------------------------------------------------------
