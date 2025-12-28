@@ -21,10 +21,7 @@ class ScreenshotSenderService {
 
   // Current values
   bool _serviceStarted = false;
-  bool _screenControlEnabled = false; // from agents endpoint
-  Duration _screenshotInterval = const Duration(minutes: 30); // default
-
-  // store what interval the current screenshot timer was created with
+  Duration? _screenshotInterval; // null = disabled
   Duration? _currentTimerInterval;
 
   final _secureStorage = SecureStorageService();
@@ -48,7 +45,6 @@ class ScreenshotSenderService {
     if (_serviceStarted) return;
     _serviceStarted = true;
 
-    // Run immediately, then every 3 minutes
     _fetchControlsAndInterval();
     _checkerTimer = Timer.periodic(
       _checkerInterval,
@@ -63,7 +59,6 @@ class ScreenshotSenderService {
     _checkerTimer?.cancel();
     _screenshotTimer?.cancel();
     _serviceStarted = false;
-    _screenControlEnabled = false;
     _currentTimerInterval = null;
     _screenshotInProgress = false;
     logger.info('[Screenshot] Service stopped.');
@@ -102,59 +97,9 @@ class ScreenshotSenderService {
         }
       }
 
-      // At this point we have token and agentId
-      await _fetchScreenControl(token, agentId);
       await _fetchScreenshotInterval(token);
     } catch (e, st) {
       logger.error('[Screenshot] failed to fetch control/interval:', e, st);
-    }
-  }
-
-  Future<void> _fetchScreenControl(String token, int agentId) async {
-    try {
-      final agentsUri = Uri.parse(
-        '$baseUrl/api/call_center/agents?page=1&size=1&fields=screen_control&id=$agentId',
-      );
-
-      final agentsResp = await http.get(
-        agentsUri,
-        headers: {'X-Webitel-Access': token},
-      );
-
-      if (agentsResp.statusCode != 200) {
-        logger.warn(
-          '[Screenshot] agents fetch failed: ${agentsResp.statusCode} ${agentsResp.body}',
-        );
-        return;
-      }
-
-      final js = jsonDecode(agentsResp.body);
-      final items = js['items'];
-      if (items is! List || items.isEmpty) {
-        logger.warn('[Screenshot] agents response missing items or empty.');
-        return;
-      }
-
-      final dynamic scValue = items.first['screen_control'];
-      final bool enabled = scValue != null && scValue == true;
-      logger.info('[Screenshot] fetched screen_control: $enabled');
-
-      if (enabled != _screenControlEnabled) {
-        _screenControlEnabled = enabled;
-        if (_screenControlEnabled) {
-          logger.info(
-            '[Screenshot] screen_control enabled → starting screenshots',
-          );
-          _startScreenshotsIfNeeded();
-        } else {
-          logger.info(
-            '[Screenshot] screen_control disabled/missing → stopping screenshots',
-          );
-          _stopScreenshots();
-        }
-      }
-    } catch (e, st) {
-      logger.error('[Screenshot] error fetching screen_control:', e, st);
     }
   }
 
@@ -171,72 +116,75 @@ class ScreenshotSenderService {
 
       if (settingsResp.statusCode != 200) {
         logger.warn(
-          '[Screenshot] settings fetch failed: ${settingsResp.statusCode} ${settingsResp.body}',
+          '[Screenshot] settings fetch failed: ${settingsResp.statusCode}',
         );
+        _disableScreenshots();
         return;
       }
 
       final js = jsonDecode(settingsResp.body);
       final items = js['items'];
+
       if (items is! List || items.isEmpty) {
-        logger.warn('[Screenshot] settings response missing items or empty.');
+        logger.info('[Screenshot] screenshot_interval not set → disabled');
+        _disableScreenshots();
         return;
       }
 
       final value = items.first['value'];
       final minutes = int.tryParse(value.toString());
+
       if (minutes == null || minutes <= 0) {
-        logger.warn('[Screenshot] invalid screenshot_interval value: $value');
+        logger.info('[Screenshot] invalid screenshot_interval → disabled');
+        _disableScreenshots();
         return;
       }
 
       final newInterval = Duration(minutes: minutes);
-      if (newInterval != _screenshotInterval) {
+
+      if (_screenshotInterval != newInterval) {
         logger.info(
-          '[Screenshot] interval updated from $_screenshotInterval to $newInterval',
+          '[Screenshot] interval updated: $_screenshotInterval → $newInterval',
         );
         _screenshotInterval = newInterval;
-        if (_screenControlEnabled) {
-          _restartScreenshotTimer();
-        }
+        _restartScreenshotTimer();
       }
     } catch (e, st) {
-      logger.error('[Screenshot] error fetching screenshot_interval:', e, st);
+      logger.error('[Screenshot] error fetching screenshot_interval', e, st);
+      _disableScreenshots();
     }
-  }
-
-  void _startScreenshotsIfNeeded() {
-    if (!_screenControlEnabled) return;
-
-    // If a timer is already running with the correct interval, do nothing.
-    if (_screenshotTimer != null &&
-        _screenshotTimer!.isActive &&
-        _currentTimerInterval == _screenshotInterval) {
-      logger.info(
-        '[Screenshot] screenshot timer already running with interval $_screenshotInterval — skipping start.',
-      );
-      return;
-    }
-
-    _restartScreenshotTimer();
   }
 
   void _restartScreenshotTimer() {
+    if (_screenshotInterval == null) return;
+
+    if (_screenshotTimer != null &&
+        _screenshotTimer!.isActive &&
+        _currentTimerInterval == _screenshotInterval) {
+      return;
+    }
+
     _screenshotTimer?.cancel();
 
-    _screenshotTimer = Timer.periodic(_screenshotInterval, (_) => screenshot());
+    _screenshotTimer = Timer.periodic(
+      _screenshotInterval!,
+      (_) => screenshot(),
+    );
+
     _currentTimerInterval = _screenshotInterval;
 
-    // Take first shot immediately but guard against near-duplicates
-    // (screenshot() itself guards against concurrent and near-duplicate runs).
     screenshot();
   }
 
-  void _stopScreenshots() {
+  void _disableScreenshots() {
+    if (_screenshotInterval == null && _screenshotTimer == null) return;
+
+    _screenshotInterval = null;
+    _currentTimerInterval = null;
     _screenshotTimer?.cancel();
     _screenshotTimer = null;
-    _currentTimerInterval = null;
-    logger.info('[Screenshot] screenshot timer stopped.');
+
+    logger.info('[Screenshot] screenshots disabled (no interval)');
   }
 
   /// Captures a screenshot depending on the platform and uploads it to the server.
@@ -335,7 +283,7 @@ class ScreenshotSenderService {
         '$baseUrl/api/storage/file/$agentId/upload',
       ).replace(
         queryParameters: {
-          'channel': "screenrecording",
+          'channel': "screensharing",
           'access_token': agentToken,
           'thumbnail': 'true',
           'name': filename,
