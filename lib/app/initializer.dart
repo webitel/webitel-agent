@@ -58,6 +58,33 @@ class AppInitializer {
   }
 }
 
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AppStatus>(
+      valueListenable: AppFlow.status,
+      builder: (context, status, child) {
+        switch (status) {
+          case AppStatus.ready:
+            return const MainPage();
+          case AppStatus.authenticating:
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          case AppStatus.failure:
+            return const Scaffold(
+              body: Center(child: Text("Authentication Failed")),
+            );
+          case AppStatus.idle:
+            return const Scaffold(body: SizedBox.shrink());
+        }
+      },
+    );
+  }
+}
+
 /// Root app when config is valid
 class AppRoot extends StatelessWidget {
   const AppRoot({super.key});
@@ -67,7 +94,7 @@ class AppRoot extends StatelessWidget {
     return MaterialApp(
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
-      home: const MainPageWrapper(),
+      home: const AuthGate(),
     );
   }
 }
@@ -83,17 +110,4 @@ class MissingConfigRoot extends StatelessWidget {
       home: MissingConfigPage(),
     );
   }
-}
-
-/// Wrapper for main page
-class MainPageWrapper extends StatefulWidget {
-  const MainPageWrapper({super.key});
-
-  @override
-  State<MainPageWrapper> createState() => _MainPageWrapperState();
-}
-
-class _MainPageWrapperState extends State<MainPageWrapper> {
-  @override
-  Widget build(BuildContext context) => const MainPage();
 }

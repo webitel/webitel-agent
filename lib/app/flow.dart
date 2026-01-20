@@ -1,6 +1,7 @@
 // lib/app/app_flow.dart
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:webitel_desk_track/app/recording_manager.dart';
 import 'package:webitel_desk_track/core/logger.dart';
@@ -15,15 +16,20 @@ import 'package:webitel_desk_track/ws/manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 /// Central app lifecycle: login → initialize services → attach socket, recorders, screenshot.
+
+enum AppStatus { idle, authenticating, ready, failure }
+
 class AppFlow {
   static final _storage = SecureStorageService();
   static ScreenshotSenderService? screenshotService;
   static RecordingManager? recordingManager;
   static SocketManager? socketManager;
   static TokenWatcher? _tokenWatcher;
+  static final ValueNotifier<AppStatus> status = ValueNotifier(AppStatus.idle);
 
   /// Start / resume the app flow. Idempotent (won't start twice).
   static Future<void> start() async {
+    status.value = AppStatus.authenticating;
     final token = await _ensureToken();
     if (token == null) {
       logger.warn('[AppFlow] No token, aborting startup.');
@@ -74,12 +80,12 @@ class AppFlow {
 
     socketManager!.socket.initServices(screenshot: screenshotService!);
 
-    if (!connected) {
-      logger.error(
-        '[AppFlow] Socket connect/auth failed, attempting interactive re-login',
-      );
+    if (connected) {
+      status.value = AppStatus.ready;
+    } else {
+      logger.error('[AppFlow] Socket connection/authentication failed');
+      status.value = AppStatus.failure;
       await interactiveRelogin();
-      return;
     }
 
     // Token watcher: monitor token expiration and trigger re-login

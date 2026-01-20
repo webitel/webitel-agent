@@ -129,21 +129,6 @@ class _MainPageState extends State<MainPage> {
                 ),
               ),
             ),
-            // Positioned(
-            //   bottom: 16,
-            //   left: 0,
-            //   right: 0,
-            //   child: Center(
-            //     child: Text(
-            //       'v${AppVersions.fullVersion}',
-            //       style: TextStyle(
-            //         color: Colors.white.withOpacity(0.7),
-            //         fontSize: 12,
-            //         fontWeight: FontWeight.w400,
-            //       ),
-            //     ),
-            //   ),
-            // ),
           ],
         ),
       ),
