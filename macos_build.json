@@ -1,0 +1,18 @@
+{
+    "title": "Webitel DeskTrack",
+    "icon": "/Users/volodiahunkalo/Downloads/development/webitel-agent-flutter/webitel-agent/assets/icons/logo.png",
+    "contents": [
+        {
+            "x": 448,
+            "y": 344,
+            "type": "link",
+            "path": "/Applications"
+        },
+        {
+            "x": 192,
+            "y": 344,
+            "type": "file",
+            "path": "/Users/volodiahunkalo/Downloads/development/webitel-agent-flutter/webitel-agent/build/macos/Build/Products/Release/webitel_desk_track.app"
+        }
+    ]
+}

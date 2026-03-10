@@ -1,22 +1,27 @@
-// mac_recorder_fixed.dart
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_session.dart';
-import 'package:ffmpeg_kit_flutter_new/return_code.dart';
+import 'dart:convert';
+import 'dart:io';
+import 'package:path/path.dart' as p;
 import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/service/ffmpeg_manager/ffmpeg_manager.dart';
 import 'package:webitel_desk_track/service/recording/ffmpeg/domain/platform_recorder.dart';
-import 'dart:async';
 
 class MacRecorder implements PlatformRecorder {
-  FFmpegSession? _session;
-  bool _isRecording = false;
+  Process? _process;
 
-  Future<List<int>> getMacScreenIndices() async {
-    const command = '-f avfoundation -list_devices true -i 0';
+  /// FETCHES ACTIVE SCREEN INDICES USING THE FFMPEG BINARY
+  Future<List<int>> _getMacScreenIndices(String ffmpegPath) async {
+    // LIST DEVICES COMMAND FOR MACOS AVFOUNDATION
+    final result = await Process.run(ffmpegPath, [
+      '-f',
+      'avfoundation',
+      '-list_devices',
+      'true',
+      '-i',
+      '0',
+    ]);
 
-    final session = await FFmpegKit.execute(command);
-    final logs = await session.getLogs();
-    final logText = logs.map((log) => log.getMessage()).join('\n');
-
+    // FFMPEG OUTPUTS DEVICE LIST TO STDERR
+    final logText = result.stderr.toString();
     final screenIndices = <int>[];
     final regex = RegExp(r'\[(\d+)\] Capture screen \d+');
 
@@ -25,69 +30,100 @@ class MacRecorder implements PlatformRecorder {
       if (index != null) screenIndices.add(index);
     }
 
-    logger.debug('Detected screens: $screenIndices');
     return screenIndices;
   }
 
   @override
   Future<void> start(String filePath) async {
-    final screenIndices = await getMacScreenIndices();
-    logger.info('Found Mac screens: $screenIndices');
+    // GET THE EXECUTABLE PATH FROM FFMPEG MANAGER
+    final ffmpegPath = await FFmpegManager.instance.path;
+    final screenIndices = await _getMacScreenIndices(ffmpegPath);
 
     if (screenIndices.isEmpty) {
-      throw Exception('No screens detected for recording.');
+      throw Exception('ERROR: NO MACOS SCREENS DETECTED');
     }
 
-    final inputArgs = screenIndices
-        .map(
-          (i) =>
-              '-f avfoundation -framerate 15 -pixel_format nv12 -i "$i:none"',
-        )
-        .join(' ');
+    logger.info('STARTING MACOS RECORDING FOR SCREENS: $screenIndices');
 
-    late final String ffmpegCommand;
+    final List<String> args = [];
 
+    // DEFINE INPUTS FOR EACH DETECTED SCREEN
+    for (var index in screenIndices) {
+      args.addAll([
+        '-f', 'avfoundation',
+        '-framerate', '15',
+        '-pixel_format', 'nv12',
+        '-i', '$index:none', // CAPTURE VIDEO ONLY, NO AUDIO
+      ]);
+    }
+
+    // CONFIGURE VIDEO FILTERS AND ENCODING
     if (screenIndices.length == 1) {
-      ffmpegCommand =
-          '$inputArgs -vf "scale=1280:720" -c:v h264_videotoolbox -pix_fmt yuv420p -b:v 5M -movflags +faststart -y "$filePath"';
+      args.addAll(['-vf', 'scale=1280:720']);
     } else {
+      // CONSTRUCT FILTER COMPLEX FOR MULTIPLE SCREENS (HSTACK)
       final stackChain = screenIndices
           .asMap()
           .entries
-          .map((entry) => '[${entry.key}:v]scale=1280:720[v${entry.key}]')
+          .map((e) => '[${e.key}:v]scale=1280:720[v${e.key}]')
           .join(';');
-
       final inputChain =
           List.generate(screenIndices.length, (i) => '[v$i]').join();
-      ffmpegCommand =
-          '$inputArgs -filter_complex "$stackChain;$inputChain hstack=inputs=${screenIndices.length}" '
-          '-c:v h264_videotoolbox -pix_fmt yuv420p -b:v 5M -movflags +faststart -y "$filePath"';
+
+      args.addAll([
+        '-filter_complex',
+        '$stackChain; $inputChain hstack=inputs=${screenIndices.length}',
+      ]);
     }
 
-    _isRecording = true;
+    // OUTPUT SETTINGS USING APPLE HARDWARE ACCELERATION
+    args.addAll([
+      '-c:v', 'h264_videotoolbox', // USE VIDEOTOOLBOX FOR PERFORMANCE
+      '-pix_fmt', 'yuv420p',
+      '-b:v', '5M',
+      '-movflags', '+faststart',
+      '-y',
+      filePath,
+    ]);
 
-    final completer = Completer<void>();
+    // START FFMPEG AS A SUBPROCESS
+    _process = await Process.start(
+      ffmpegPath,
+      args,
+      runInShell: false,
+      workingDirectory: p.dirname(ffmpegPath),
+    );
 
-    _session = await FFmpegKit.executeAsync(ffmpegCommand, (session) async {
-      final returnCode = await session.getReturnCode();
-      if (ReturnCode.isSuccess(returnCode)) {
-        logger.info('Recording saved → $filePath');
-      } else {
-        logger.error('Recording failed: $returnCode');
+    // LISTEN TO STDERR FOR REAL-TIME FFMPEG STATUS OR ERRORS
+    _process!.stderr.transform(utf8.decoder).listen((data) {
+      if (data.contains('Error')) {
+        logger.error('FFMPEG CORE ERROR: $data');
       }
-      _isRecording = false;
-      completer.complete();
     });
 
-    await Future.delayed(const Duration(milliseconds: 200));
+    logger.info('MACOS RECORDING INITIATED → $filePath');
   }
 
   @override
   Future<void> stop() async {
-    if (!_isRecording) return;
-    logger.info('Stopping macOS recording');
-    await _session?.cancel();
-    await Future.delayed(const Duration(milliseconds: 500));
-    _isRecording = false;
+    if (_process == null) return;
+    logger.info('STOPPING MACOS FFMPEG PROCESS');
+
+    // SEND 'Q' TO STDIN TO STOP RECORDING GRACEFULLY
+    _process!.stdin.writeln('q');
+    await _process!.stdin.flush();
+
+    // WAIT FOR PROCESS TO EXIT OR FORCE KILL AFTER TIMEOUT
+    final exitCode = await _process!.exitCode.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        logger.warn('FFMPEG STOP TIMEOUT → KILLING PROCESS');
+        _process!.kill();
+        return -1;
+      },
+    );
+
+    logger.info('FFMPEG EXITED WITH CODE: $exitCode');
+    _process = null;
   }
 }

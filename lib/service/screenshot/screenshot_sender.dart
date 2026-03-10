@@ -283,7 +283,7 @@ class ScreenshotSenderService {
         '$baseUrl/api/storage/file/$agentId/upload',
       ).replace(
         queryParameters: {
-          'channel': "screensharing",
+          'channel': "screenrecording",
           'access_token': agentToken,
           'thumbnail': 'true',
           'name': filename,

@@ -7,59 +7,46 @@ import 'package:path/path.dart' as p;
 import 'package:webitel_desk_track/core/logger.dart';
 import 'package:webitel_desk_track/service/ffmpeg_manager/ffmpeg_manager.dart';
 
-Future<String?> getStereoMixDeviceId() async {
+Future<String?> _findDeviceByKeywords(List<String> keywords) async {
   final ffmpegPath = await FFmpegManager.instance.path;
-  logger.info('[StereoMix] Using FFmpeg at: $ffmpegPath');
-
-  final ffmpegProcess = await Process.start(
+  final process = await Process.start(
     ffmpegPath,
     ['-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'],
     runInShell: false,
     workingDirectory: p.dirname(ffmpegPath),
   );
 
-  await for (var line in ffmpegProcess.stderr
+  String? foundName;
+  await for (var line in process.stderr
       .transform(utf8.decoder)
       .transform(LineSplitter())) {
-    logger.info('[FFMPEG STDERR] $line');
-
-    if (line.contains('Stereo') && line.contains('"')) {
-      final match = RegExp(r'"(.*)"').firstMatch(line);
-      if (match != null) {
-        final device = match.group(1);
-        logger.info('[StereoMix] Found device: $device');
-        return device;
+    // FFmpeg dshow output usually looks like: [dshow @ ...]  "Stereo Mix (Realtek Audio)"
+    for (var keyword in keywords) {
+      if (line.contains(keyword) && line.contains('"')) {
+        final match = RegExp(r'"(.*)"').firstMatch(line);
+        if (match != null) {
+          foundName = match.group(1);
+          break;
+        }
       }
     }
+    if (foundName != null) break;
   }
 
-  final exitCode = await ffmpegProcess.exitCode;
-  logger.info('[FFMPEG] Process exited with code: $exitCode');
+  process.kill();
+  return foundName;
+}
 
-  return null;
+Future<String?> getStereoMixDeviceId() async {
+  final keywords = AppConfig.instance.stereoMixKeywords;
+  logger.info('[StereoMix] Searching with keywords: $keywords');
+  return await _findDeviceByKeywords(keywords);
 }
 
 Future<String?> getMicrophoneDeviceId() async {
-  final ffmpegPath = await FFmpegManager.instance.path;
-  final ffmpegProcess = await Process.start(
-    ffmpegPath,
-    ['-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'],
-    runInShell: false,
-    workingDirectory: p.dirname(ffmpegPath),
-  );
-
-  String? micId;
-  await for (var line in ffmpegProcess.stderr
-      .transform(utf8.decoder)
-      .transform(LineSplitter())) {
-    if (line.contains('Microphone') && line.contains('"')) {
-      final match = RegExp(r'"(.*)"').firstMatch(line);
-      if (match != null) micId = match.group(1);
-    }
-  }
-
-  await ffmpegProcess.exitCode;
-  return micId;
+  final keywords = AppConfig.instance.microphoneKeywords;
+  logger.info('[Microphone] Searching with keywords: $keywords');
+  return await _findDeviceByKeywords(keywords);
 }
 
 Future<List<MediaStream>> captureAllDesktopScreensWindows(
@@ -116,14 +103,6 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
         },
         'audio': false,
       });
-
-      // FIXME
-      // final micStream = await navigator.mediaDevices.getUserMedia({
-      //   'audio': true,
-      // });
-      // for (final track in micStream.getAudioTracks()) {
-      //   screenStream.addTrack(track);
-      // }
 
       await startStreamingFFmpeg(
         stereoMixId,
@@ -287,14 +266,6 @@ Future<MediaStream?> captureDesktopScreen() async {
     logger.info(
       '[Capturer] Enumerated media devices for mic: ${devices.length}',
     );
-
-    final micStream = await navigator.mediaDevices.getUserMedia({
-      'audio': true,
-    });
-
-    for (final track in micStream.getAudioTracks()) {
-      screenStream.addTrack(track);
-    }
 
     logger.info('[Capturer] Screen + mic capture started successfully');
     return screenStream;

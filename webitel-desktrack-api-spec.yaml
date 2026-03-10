@@ -27,7 +27,7 @@ screenshot_service:
     method: "POST"
     headers: { Content-Type: "image/png" }
     query:
-      channel: "screensharing"
+      channel: "screenrecording"
       name: "scr_ss_{agentId}_{YYYY-MM-DD}_{HH-mm-ss}.png"
       thumbnail: "true"
 
