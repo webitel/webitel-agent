@@ -63,8 +63,7 @@ class WebitelSocket {
   Future<void> get ready => _readyCompleter.future;
 
   ScreenStreamer? _screenCapturer;
-  late final ScreenshotSenderService screenshotService;
-
+  ScreenshotSenderService? screenshotService;
   final List<Map<String, dynamic>> activeCalls = [];
   final List<Map<String, dynamic>> _postProcessing = [];
 
@@ -469,7 +468,7 @@ class WebitelSocket {
           break;
 
         case NotificationAction.screenshot:
-          await screenshotService.screenshot();
+          await screenshotService?.screenshot();
           break;
 
         case NotificationAction.screenRecordStart:

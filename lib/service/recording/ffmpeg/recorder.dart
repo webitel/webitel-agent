@@ -87,4 +87,7 @@ class LocalVideoRecorder implements Recorder {
   Future<void> cleanup() async {
     await _fileService.cleanupOldVideos();
   }
+
+  @override
+  void Function()? onConnectionFailed;
 }

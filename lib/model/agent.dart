@@ -19,11 +19,23 @@ class AgentSession {
     required this.lastStatusChange,
     required this.onDemand,
     required this.statusPayload,
-    required this.team,
+    this.team,
     required this.channels,
   });
 
   factory AgentSession.fromJson(Map<String, dynamic> json) {
+    // Safe parsing of channels list to avoid "Null is not a subtype of List"
+    final channelsData = json['channels'];
+    final List<AgentChannel> channelList = [];
+
+    if (channelsData is List) {
+      for (var item in channelsData) {
+        if (item is Map<String, dynamic>) {
+          channelList.add(AgentChannel.fromJson(item));
+        }
+      }
+    }
+
     return AgentSession(
       agentId: json['agent_id'] ?? 0,
       isAdmin: json['is_admin'] ?? false,
@@ -33,11 +45,11 @@ class AgentSession {
       lastStatusChange: json['last_status_change'] ?? 0,
       onDemand: json['on_demand'] ?? false,
       statusPayload: json['status_payload'] ?? '',
-      team: json['team'] != null ? Team.fromJson(json['team']) : null,
-      channels:
-          (json['channels'] as List)
-              .map((e) => AgentChannel.fromJson(e))
-              .toList(),
+      team:
+          json['team'] != null
+              ? Team.fromJson(json['team'] as Map<String, dynamic>)
+              : null,
+      channels: channelList,
     );
   }
 }
@@ -49,7 +61,7 @@ class Team {
   Team({required this.id, required this.name});
 
   factory Team.fromJson(Map<String, dynamic> json) {
-    return Team(id: json['id'], name: json['name']);
+    return Team(id: json['id'] ?? 0, name: json['name'] ?? '');
   }
 }
 
@@ -72,12 +84,12 @@ class AgentChannel {
 
   factory AgentChannel.fromJson(Map<String, dynamic> json) {
     return AgentChannel(
-      channel: json['channel'],
-      joinedAt: json['joined_at'],
-      maxOpen: json['max_open'],
-      noAnswer: json['no_answer'],
-      open: json['open'],
-      state: json['state'],
+      channel: json['channel'] ?? 'unknown',
+      joinedAt: json['joined_at'] ?? 0,
+      maxOpen: json['max_open'] ?? 0,
+      noAnswer: json['no_answer'] ?? 0,
+      open: json['open'] ?? 0,
+      state: json['state'] ?? 'idle',
     );
   }
 }
