@@ -75,7 +75,7 @@ class ScreenshotSenderService {
       }
 
       int? agentId = await _secureStorage.readAgentId();
-      if (agentId == null) {
+      if (agentId == null || agentId == 0) {
         logger.warn(
           '[Screenshot] Missing agentId → trying to fetch via WebSocket...',
         );

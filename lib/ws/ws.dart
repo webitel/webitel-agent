@@ -312,12 +312,15 @@ class WebitelSocket {
 
   String? _lastCallId;
 
+  /// A simplified UUID pattern that matches the standard 8-4-4-4-12 hex format.
+  /// This version is less restrictive than RFC 4122 to accommodate various
+  /// server-side UUID implementations (e.g., FreeSWITCH, Sip ID).
   final _uuidRegExp = RegExp(
-    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
   );
 
-  // Validates UUID according to RFC 4122 standard (universally unique identifier format),
-  // supporting versions 1–5. Example format: 550e8400-e29b-41d4-a716-446655440000
+  /// Validates whether the given [id] strictly follows the UUID string format.
+  /// Returns true if the ID matches the 8-4-4-4-12 hexadecimal structure.
   bool _isValidUuid(String id) {
     return _uuidRegExp.hasMatch(id);
   }
@@ -339,6 +342,7 @@ class WebitelSocket {
     switch (callEvent) {
       case 'ringing':
       case 'update':
+        // if (callId != null) {
         if (callId != null && recordScreen) {
           _screenRecordingActive = true;
           _onCallRinging?.call(parentId ?? callId);
@@ -661,7 +665,16 @@ class WebitelSocket {
 
   Future<AgentSession> getAgentSession() async {
     final response = await request(SocketActions.agentSession);
-    return AgentSession.fromJson(response);
+    final session = AgentSession.fromJson(response);
+
+    if (session.agentId != 0) {
+      await SecureStorageService().writeAgentId(session.agentId);
+      logger.info(
+        '[WebitelSocket] agent_id ${session.agentId} saved from session request',
+      );
+    }
+
+    return session;
   }
 
   Future<void> ack(String id, String? err) async {

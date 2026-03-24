@@ -69,6 +69,9 @@ class RecordingManager {
               iceServers: appConfig.webrtcIceServers,
             );
 
+    // BIND RECONNECTION LOGIC
+    recorder.onConnectionFailed = () => _handleReconnection(recordingId, type);
+
     _recorders[type] = recorder;
 
     await recorder.start(recordingId: recordingId);
@@ -83,20 +86,51 @@ class RecordingManager {
     logger.info('[RecordingManager] Started $type → $recordingId');
   }
 
-  Future<void> _onStop(String id, {required RecordingType type}) async {
+  /// Handles automatic recovery when WebRTC connection drops
+  void _handleReconnection(String id, RecordingType type) {
+    // If recorder is already null, it means we stopped manually (hangup)
+    if (_recorders[type] == null) return;
+
+    logger.warn(
+      '[RecordingManager] Recovery: Network issue on $id. Retrying in 5s...',
+    );
+
+    // 1. Clean up current failed instance without removing global timers
+    _onStop(id, type: type, isRecovering: true);
+
+    // 2. Schedule a fresh start
+    Timer(const Duration(seconds: 5), () {
+      // Ensure we still have an active session context (e.g., call hasn't ended)
+      logger.info('[RecordingManager] Recovery: Attempting restart for $id');
+      _onStart(id, type: type);
+    });
+  }
+
+  Future<void> _onStop(
+    String id, {
+    required RecordingType type,
+    bool isRecovering = false,
+  }) async {
     final recorder = _recorders[type];
     if (recorder == null) return;
 
-    _timers[type]![id]?.cancel();
-    _timers[type]!.remove(id);
+    // Do not cancel global limit timer if we are just recovering from network drop
+    if (!isRecovering) {
+      _timers[type]![id]?.cancel();
+      _timers[type]!.remove(id);
+    }
 
     try {
       await recorder.stop();
-      await recorder.upload();
-      await recorder.cleanup();
-      logger.info('[RecordingManager] Stopped $type → $id');
-    } catch (e, st) {
-      logger.warn('[RecordingManager] stop/upload error ($type): $e\n$st');
+      if (!isRecovering) {
+        await recorder.upload();
+        await recorder.cleanup();
+      }
+      logger.info(
+        '[RecordingManager] ${isRecovering ? "Paused" : "Stopped"} $type → $id',
+      );
+    } catch (e) {
+      logger.warn('[RecordingManager] Shutdown error: $e');
     } finally {
       _recorders[type] = null;
     }

@@ -33,17 +33,20 @@ class StreamRecorder implements Recorder {
   @override
   Future<void> start({required String recordingId}) async {
     logger.info('[StreamRecorder] Initializing WebRTC session for $callId');
+
+    // Create peer connection with provided ICE configuration
     pc = await createPeerConnectionWithConfig(iceServers);
 
-    // Set up connection state listeners
+    // Listen for ICE connection state changes to trigger recovery
     pc!.onIceConnectionState = (state) {
       if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
           state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
-        logger.warn('[StreamRecorder] ICE Connection failure: $state');
+        logger.warn('[StreamRecorder] ICE Connection failure detected: $state');
         onConnectionFailed?.call();
       }
     };
 
+    // Monitor peer connection state for metrics reporting
     pc!.onConnectionState = (state) {
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         if (AppConfig.instance.webrtcEnableMetrics) {
@@ -53,7 +56,7 @@ class StreamRecorder implements Recorder {
       }
     };
 
-    // Capture screen sources based on platform
+    // Initialize screen capture based on host platform
     if (Platform.isWindows) {
       streams = await captureAllDesktopScreensWindows(
         FFmpegMode.recording,
@@ -70,7 +73,7 @@ class StreamRecorder implements Recorder {
       throw Exception('No display sources available for capture');
     }
 
-    // Add tracks and set encoding parameters
+    // Attach tracks to PeerConnection and apply encoding settings
     for (final stream in streams) {
       for (final track in stream.getTracks()) {
         final sender = await pc!.addTrack(track, stream);
@@ -80,7 +83,7 @@ class StreamRecorder implements Recorder {
       }
     }
 
-    // SDP Handshake
+    // Standard SDP Handshake: Offer -> Exchange -> Answer
     final offer = await pc!.createOffer();
     await pc!.setLocalDescription(offer);
 
@@ -96,9 +99,20 @@ class StreamRecorder implements Recorder {
 
     _sessionID = response.streamId;
     await pc!.setRemoteDescription(response.answer);
-    logger.info('[StreamRecorder] Recording session established: $_sessionID');
+    logger.info('[StreamRecorder] Session established: $_sessionID');
+
+    // // --- RECOVERY TEST LOGIC ---
+    // // Simulates a network drop 15 seconds into the recording
+    // Future.delayed(const Duration(seconds: 25), () async {
+    //   if (pc != null && _sessionID != null) {
+    //     logger.warn('[TEST] Simulating disconnect to verify recovery logic...');
+    //     // Closing the connection triggers onIceConnectionState -> Failed
+    //     onConnectionFailed?.call();
+    //   }
+    // });
   }
 
+  /// Configures video bitrate and quality preferences
   Future<void> _configureVideoEncoding(RTCRtpSender sender) async {
     final params = sender.parameters;
     if (params.encodings!.isEmpty) params.encodings!.add(RTCRtpEncoding());
@@ -115,9 +129,10 @@ class StreamRecorder implements Recorder {
 
   @override
   Future<void> stop() async {
-    logger.info('[StreamRecorder] Closing session for $callId');
+    logger.info('[StreamRecorder] Terminating session for $callId');
     _metricsReporter?.stop();
 
+    // Release FFmpeg resources and notify server
     await stopStereoAudioFFmpeg(FFmpegMode.recording);
 
     if (_sessionID != null) {
@@ -128,10 +143,11 @@ class StreamRecorder implements Recorder {
           id: _sessionID!,
         );
       } catch (e) {
-        logger.warn('[StreamRecorder] Server-side termination failed: $e');
+        logger.warn('[StreamRecorder] Server-side cleanup failed: $e');
       }
     }
 
+    // Stop all local media tracks
     for (final stream in streams) {
       for (final track in stream.getTracks()) {
         track.stop();
@@ -144,8 +160,8 @@ class StreamRecorder implements Recorder {
   }
 
   @override
-  Future<void> upload() async {} // Live streaming: data sent in real-time
+  Future<void> upload() async {} // Live stream: data transmitted in real-time
 
   @override
-  Future<void> cleanup() async {} // Live streaming: no local files to clean
+  Future<void> cleanup() async {} // Live stream: no local filesystem overhead
 }
