@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:webitel_desk_track/service/ffmpeg_manager/ffmpeg_manager.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:webitel_desk_track/config/config.dart';
 import 'package:webitel_desk_track/core/logger.dart';
@@ -25,6 +26,7 @@ class AppInitializer {
     await TrayService.instance.initTray();
 
     if (config != null) {
+      FFmpegManager.instance.init();
       // Config exists → start main app
       runApp(const AppRoot());
       WidgetsBinding.instance.addPostFrameCallback((_) async {
