@@ -39,6 +39,7 @@ class StreamRecorder implements Recorder {
 
     // Listen for ICE connection state changes to trigger recovery
     pc!.onIceConnectionState = (state) {
+      logger.debug('[StreamRecorder] onIceConnectionState: ${state.name}');
       if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
           state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
         logger.warn('[StreamRecorder] ICE Connection failure detected: $state');
