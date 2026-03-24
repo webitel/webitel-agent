@@ -21,6 +21,7 @@ dependencies:
   flutter_inappwebview: ^6.1.5
   http: ^1.4.0
   web_socket_channel: ^3.0.3
+  windows_single_instance: ^1.1.0
   path_provider: ^2.1.5
   protoc_plugin: ^24.0.0
   fixnum: ^1.1.1
