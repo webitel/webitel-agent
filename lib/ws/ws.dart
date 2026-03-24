@@ -213,13 +213,27 @@ class WebitelSocket {
       logger.error('[WebitelSocket] Error fetching screen_control:', e, st);
     }
 
-    // --- IGNORE EVENTS IF CONTROL DISABLED ---
+    // --- IGNORE EVENTS IF CONTROL DISABLED (Wait for current session to finish) ---
     if (!screenControlEnabled) {
-      if (event == WebSocketEvent.call || event == WebSocketEvent.channel) {
+      // If control is disabled but we are currently recording or have active calls,
+      // we must let the events pass through to correctly finish and stop the session.
+      final bool isSessionActive =
+          _screenRecordingActive ||
+          activeCalls.isNotEmpty ||
+          _postProcessing.isNotEmpty;
+
+      if (!isSessionActive) {
+        if (event == WebSocketEvent.call || event == WebSocketEvent.channel) {
+          logger.debug(
+            '[WebitelSocket] Agent control disabled and no active session → ignoring ${data['event']}',
+          );
+          return;
+        }
+      } else {
+        // If session is active, we continue processing until hangup/wrap-up clears the state.
         logger.debug(
-          '[WebitelSocket] Agent control disabled → ignoring ${data['event']}',
+          '[WebitelSocket] Agent control disabled but session is active → processing ${data['event']} to finish recording.',
         );
-        return;
       }
     }
 
