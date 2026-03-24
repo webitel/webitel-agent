@@ -212,26 +212,39 @@ Future<void> stopStereoAudioFFmpeg(FFmpegMode mode) async {
   if (process == null) return;
 
   try {
+    logger.info('[Capturer] Requesting FFmpeg to stop...');
+
+    // Sending 'q' command to FFmpeg's stdin for a graceful shutdown.
+    // FFmpeg interprets 'q' as a signal to finish muxing and exit.
     process.stdin.writeln('q');
     await process.stdin.flush();
-    await process.stdin.close();
 
-    await process.stdout.drain();
-    await process.stderr.drain();
+    // CRITICAL: Do NOT use process.stdout.drain() or process.stderr.drain() here.
+    // These streams are already being listened to in startStreamingFFmpeg.
+    // Attempting to listen again causes "Bad state: Stream has already been listened to".
 
+    // Wait for the process to exit naturally after receiving 'q'.
     await process.exitCode.timeout(
       const Duration(seconds: 2),
       onTimeout: () {
-        logger.warn('[Capturer] FFmpeg did not exit, killing process');
-        process?.kill();
+        // If FFmpeg is stuck and doesn't exit within the timeout, force kill it.
+        logger.warn(
+          '[Capturer] FFmpeg graceful exit timeout. Killing process.',
+        );
+        process?.kill(ProcessSignal.sigkill);
         return -1;
       },
     );
+
+    // Close stdin after the process has exited or been killed.
+    await process.stdin.close();
   } catch (e, st) {
-    logger.error('[Capturer] Error stopping FFmpeg', e, st);
+    logger.error('[Capturer] Exception during FFmpeg shutdown', e, st);
   } finally {
+    // Reset process reference to allow for future restarts.
     if (mode == FFmpegMode.streaming) _streamingProcess = null;
     if (mode == FFmpegMode.recording) _recordingProcess = null;
+    logger.info('[Capturer] FFmpeg process reference cleared.');
   }
 }
 
