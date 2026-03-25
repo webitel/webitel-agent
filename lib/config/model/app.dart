@@ -86,7 +86,7 @@ class AppConfigModel {
       baseUrl: baseUrl,
       loginUrl: buildUrl('/'),
       webitelWsUrl: buildUrl(
-        '/ws/websocket?application_name=desk_track',
+        '/ws/websocket?application_name=desc_track',
         isWs: true,
       ),
       videoWidth: _toInt(video['width'], 1280),
