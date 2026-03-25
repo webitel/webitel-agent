@@ -1,16 +1,22 @@
 import 'dart:async';
-import 'package:webitel_desk_track/core/logger.dart';
-import 'package:webitel_desk_track/config/config.dart';
-import 'package:webitel_desk_track/service/recording/ffmpeg/recorder.dart';
-import 'package:webitel_desk_track/service/recording/recorder.dart';
-import 'package:webitel_desk_track/service/recording/webrtc/webrtc_recorder.dart';
-import 'package:webitel_desk_track/storage/storage.dart';
-import 'package:webitel_desk_track/ws/ws.dart';
+import 'package:webitel_desk_track/config/service.dart';
+import 'package:webitel_desk_track/core/logger/logger.dart';
+import 'package:webitel_desk_track/core/storage/interface.dart';
+import 'package:webitel_desk_track/service/common/recorder/factory.dart';
+import 'package:webitel_desk_track/service/common/recorder/recorder_interface.dart';
+import 'package:webitel_desk_track/ws/webitel_socket.dart';
 
 enum RecordingType { call, screen }
 
 class RecordingManager {
-  final _recorders = <RecordingType, Recorder?>{
+  final IStorageService _storage;
+  final RecorderFactory _factory;
+
+  RecordingManager({required IStorageService storage})
+    : _storage = storage,
+      _factory = RecorderFactory(storage);
+
+  final _recorders = <RecordingType, RecorderI?>{
     RecordingType.call: null,
     RecordingType.screen: null,
   };
@@ -20,90 +26,59 @@ class RecordingManager {
     RecordingType.screen: {},
   };
 
-  // ---------------------------------------------------------------------------
-  // Socket binding
-  // ---------------------------------------------------------------------------
-
+  /// Binds socket events to recording lifecycle actions.
   void attachSocket(WebitelSocket socket) {
-    socket.onCallEvent(
-      onRinging: (callId) => _onStart(callId, type: RecordingType.call),
-      onHangup: (callId) => _onStop(callId, type: RecordingType.call),
-    );
+    logger.info('[RecordingManager] Binding to socket events');
 
-    socket.onScreenRecordEvent(
-      onStart: (body) {
-        final rootId = body['root_id']?.toString() ?? 'unknown_root';
-        _onStart(rootId, type: RecordingType.screen);
-      },
-      onStop: (body) {
-        final rootId = body['root_id']?.toString() ?? 'unknown_root';
-        _onStop(rootId, type: RecordingType.screen);
-      },
-    );
+    socket.onScreenRecordStart = (body) {
+      final rootId =
+          body['root_id']?.toString() ??
+          'session_${DateTime.now().millisecondsSinceEpoch}';
+      final type =
+          body.containsKey('call_id')
+              ? RecordingType.call
+              : RecordingType.screen;
+      _onStart(rootId, type: type);
+    };
+
+    socket.onScreenRecordStop = (body) {
+      for (var type in RecordingType.values) {
+        if (_recorders[type] != null) {
+          _onStop('socket_signal', type: type);
+        }
+      }
+    };
   }
 
-  // ---------------------------------------------------------------------------
-  // Lifecycle
-  // ---------------------------------------------------------------------------
+  Future<void> _onStart(String id, {required RecordingType type}) async {
+    final token = await _storage.readAccessToken() ?? '';
+    if (token.isEmpty) {
+      logger.error('[RecordingManager] Missing access token for $type');
+      return;
+    }
 
-  Future<void> _onStart(String? id, {required RecordingType type}) async {
-    final appConfig = AppConfig.instance;
-    final token = await SecureStorageService().readAccessToken() ?? '';
-    final recordingId = id ?? DateTime.now().millisecondsSinceEpoch.toString();
+    // Ensure previous session of the same type is closed
+    if (_recorders[type] != null) {
+      await _onStop(id, type: type);
+    }
 
-    // Ensure previous recorder stopped
-    await _recorders[type]?.stop();
-
-    final recorder =
-        appConfig.videoSaveLocally
-            ? LocalVideoRecorder(
-              callId: recordingId,
-              agentToken: token,
-              baseUrl: appConfig.baseUrl,
-              channel: 'screenrecording',
-            )
-            : StreamRecorder(
-              callId: recordingId,
-              token: token,
-              sdpResolverUrl: AppConfig.instance.webrtcSdpUrl,
-              iceServers: appConfig.webrtcIceServers,
-            );
-
-    // BIND RECONNECTION LOGIC
-    recorder.onConnectionFailed = () => _handleReconnection(recordingId, type);
-
+    // Delegate creation to factory
+    final recorder = _factory.create(id: id, token: token);
+    recorder.onConnectionFailed = () => _handleReconnection(id, type);
     _recorders[type] = recorder;
 
-    await recorder.start(recordingId: recordingId);
+    try {
+      await recorder.start(recordingId: id);
+      logger.info('[RecordingManager] Started $type session: $id');
 
-    // Set auto-stop timer
-    final t = Timer(
-      Duration(seconds: appConfig.maxCallRecordDuration),
-      () => _onStop(recordingId, type: type),
-    );
-    _timers[type]![recordingId] = t;
-
-    logger.info('[RecordingManager] Started $type → $recordingId');
-  }
-
-  /// Handles automatic recovery when WebRTC connection drops
-  void _handleReconnection(String id, RecordingType type) {
-    // If recorder is already null, it means we stopped manually (hangup)
-    if (_recorders[type] == null) return;
-
-    logger.warn(
-      '[RecordingManager] Recovery: Network issue on $id. Retrying in 5s...',
-    );
-
-    // 1. Clean up current failed instance without removing global timers
-    _onStop(id, type: type, isRecovering: true);
-
-    // 2. Schedule a fresh start
-    Timer(const Duration(seconds: 5), () {
-      // Ensure we still have an active session context (e.g., call hasn't ended)
-      logger.info('[RecordingManager] Recovery: Attempting restart for $id');
-      _onStart(id, type: type);
-    });
+      _timers[type]![id] = Timer(
+        Duration(seconds: AppConfig.instance.maxCallRecordDuration),
+        () => _onStop(id, type: type),
+      );
+    } catch (e, st) {
+      logger.error('[RecordingManager] Failed to start $type', e, st);
+      _recorders[type] = null;
+    }
   }
 
   Future<void> _onStop(
@@ -114,7 +89,6 @@ class RecordingManager {
     final recorder = _recorders[type];
     if (recorder == null) return;
 
-    // Do not cancel global limit timer if we are just recovering from network drop
     if (!isRecovering) {
       _timers[type]![id]?.cancel();
       _timers[type]!.remove(id);
@@ -126,43 +100,26 @@ class RecordingManager {
         await recorder.upload();
         await recorder.cleanup();
       }
-      logger.info(
-        '[RecordingManager] ${isRecovering ? "Paused" : "Stopped"} $type → $id',
-      );
+      logger.info('[RecordingManager] Stopped $type session: $id');
     } catch (e) {
-      logger.warn('[RecordingManager] Shutdown error: $e');
+      logger.warn('[RecordingManager] Cleanup error for $id: $e');
     } finally {
       _recorders[type] = null;
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Stop all
-  // ---------------------------------------------------------------------------
+  void _handleReconnection(String id, RecordingType type) {
+    if (_recorders[type] == null) return;
+    logger.warn('[RecordingManager] Recovery triggered for $id');
+    _onStop(id, type: type, isRecovering: true);
+    Timer(const Duration(seconds: 5), () => _onStart(id, type: type));
+  }
 
   Future<void> stopAllAndUpload() async {
-    logger.info('[RecordingManager] stopAllAndUpload called');
-
-    for (final map in _timers.values) {
-      for (final t in map.values) {
-        t.cancel();
-      }
-      map.clear();
-    }
-
-    for (final type in RecordingType.values) {
-      final recorder = _recorders[type];
-      if (recorder == null) continue;
-
-      try {
-        await recorder.stop();
-        await recorder.upload();
-        await recorder.cleanup();
-      } catch (e, st) {
-        logger.warn('[RecordingManager] error stopping $type: $e\n$st');
-      } finally {
-        _recorders[type] = null;
-      }
-    }
+    final activeTypes =
+        _recorders.keys.where((t) => _recorders[t] != null).toList();
+    await Future.wait(
+      activeTypes.map((type) => _onStop('emergency', type: type)),
+    );
   }
 }
