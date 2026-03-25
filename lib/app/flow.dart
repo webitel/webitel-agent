@@ -2,61 +2,55 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:webitel_desk_track/config/service.dart';
-import 'package:webitel_desk_track/core/storage/interface.dart';
-import 'package:webitel_desk_track/core/storage/storage.dart';
-import 'package:webitel_desk_track/service/tray/tray.dart';
-import 'package:window_manager/window_manager.dart';
-
-import 'package:webitel_desk_track/ws/socket_manager.dart';
 import 'package:webitel_desk_track/app/recording_manager.dart';
 import 'package:webitel_desk_track/core/logger/logger.dart';
 import 'package:webitel_desk_track/service/auth/login.dart';
 import 'package:webitel_desk_track/service/auth/token_watcher.dart';
+import 'package:webitel_desk_track/core/storage/interface.dart';
+import 'package:webitel_desk_track/core/storage/storage.dart';
 import 'package:webitel_desk_track/service/screenshot/sender.dart';
+import 'package:webitel_desk_track/service/tray/tray.dart';
+import 'package:webitel_desk_track/config/service.dart';
+import 'package:webitel_desk_track/ws/socket_manager.dart';
+import 'package:window_manager/window_manager.dart';
 
 enum AppStatus { idle, authenticating, ready, failure }
 
 class AppFlow {
-  // Singleton instance
-  static final AppFlow instance = AppFlow._();
+  // [LOGIC] Private constructor for Singleton pattern
   AppFlow._();
+  static final AppFlow instance = AppFlow._();
 
-  // Internal shared storage instance
   final IStorageService _storage = SharedPrefsService();
 
-  // Public getter to allow external initialization (e.g., in AppInitializer)
-  IStorageService get storage => _storage;
-
-  ScreenshotSenderService? _screenshotService;
-  RecordingManager? _recordingManager;
-  SocketManager? _socketManager;
+  ScreenshotSenderService? screenshotService;
+  RecordingManager? recordingManager;
+  SocketManager? socketManager;
   TokenWatcher? _tokenWatcher;
 
   final ValueNotifier<AppStatus> status = ValueNotifier(AppStatus.idle);
 
-  /// Entry point to start the application flow
+  /// Getter for storage if needed externally (e.g., for Tray initialization)
+  IStorageService get storage => _storage;
+
+  /// Entry point to start the application flow.
   Future<void> start() async {
     if (status.value == AppStatus.authenticating) return;
 
     status.value = AppStatus.authenticating;
     logger.info('[AppFlow] Starting application sequence...');
 
-    // Initialize tray with storage first to ensure UI is ready
-    await TrayService.init(AppFlow.instance.storage);
-
     final token = await _ensureToken();
-
     if (token == null) {
       logger.warn('[AppFlow] No valid token found. Aborting startup.');
       status.value = AppStatus.idle;
       return;
     }
 
-    await _initializeServices(token);
+    await _initializeWithToken(token);
   }
 
-  /// Validates existing token or performs fresh login if needed
+  /// Validates existing token or performs fresh login.
   Future<String?> _ensureToken() async {
     var token = await _storage.readAccessToken();
     final loginService = LoginService(storage: _storage);
@@ -86,45 +80,46 @@ class AppFlow {
     return token;
   }
 
-  /// Dependency Injection and Service Setup
-  Future<void> _initializeServices(String token) async {
+  /// Dependency Injection and Service Setup.
+  Future<void> _initializeWithToken(String token) async {
     try {
       logger.info('[AppFlow] Initializing core modules...');
 
       // 1. Screenshot Service
-      _screenshotService = ScreenshotSenderService(
+      screenshotService ??= ScreenshotSenderService(
         baseUrl: AppConfig.instance.baseUrl,
         storage: _storage,
-      )..start();
+      );
+      screenshotService!.start();
 
       // 2. Recording Manager
-      _recordingManager = RecordingManager(storage: _storage);
+      recordingManager ??= RecordingManager(storage: _storage);
 
       // 3. Socket Manager
-      _socketManager = SocketManager(
+      socketManager ??= SocketManager(
         baseUrl: AppConfig.instance.baseUrl,
         wsUrl: AppConfig.instance.webitelWsUrl,
         token: token,
         storage: _storage,
       );
 
-      final success = await _socketManager!.connectAndAuthenticate();
+      final connected = await socketManager!.connectAndAuthenticate();
 
-      if (success) {
-        final socket = _socketManager!.socket;
+      if (connected) {
+        final socket = socketManager!.socket;
 
-        // Wire up all dependencies for the socket handlers
-        socket.initServices(screenshot: _screenshotService!, storage: _storage);
-
-        _recordingManager!.attachSocket(socket);
+        // [LOGIC] Link all components to the active socket
+        socket.initServices(screenshot: screenshotService!, storage: _storage);
+        recordingManager!.attachSocket(socket);
         TrayService.instance.attachSocket(socket);
 
-        // 4. Token Watcher to handle background expiration
-        _tokenWatcher = TokenWatcher(
+        // 4. Token Watcher
+        _tokenWatcher ??= TokenWatcher(
           baseUrl: AppConfig.instance.baseUrl,
           onExpired: interactiveRelogin,
           storage: _storage,
-        )..start();
+        );
+        _tokenWatcher!.start();
 
         status.value = AppStatus.ready;
         logger.info('[AppFlow] All services are ready and connected.');
@@ -138,9 +133,10 @@ class AppFlow {
     }
   }
 
-  /// Forces UI to front and requests new credentials from the user
+  /// Forces UI focus and requests new credentials.
   Future<void> interactiveRelogin() async {
     logger.info('[AppFlow] Interactive relogin requested');
+    await _storage.deleteAccessToken();
     await shutdown();
 
     if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
@@ -153,28 +149,30 @@ class AppFlow {
     final ok = await loginService.performLogin();
 
     if (ok) {
+      // [GUARD] Delay to ensure WebView is fully disposed before new socket init.
+      await Future.delayed(const Duration(milliseconds: 800));
+
       final newToken = await _storage.readAccessToken();
-      if (newToken != null) await _initializeServices(newToken);
+      if (newToken != null) await _initializeWithToken(newToken);
     }
   }
 
-  /// Clean teardown of all active instances before app close or relogin
+  /// Clean teardown of all active instances.
   Future<void> shutdown() async {
     logger.info('[AppFlow] Performing graceful shutdown...');
 
-    _screenshotService?.stop();
-    _screenshotService = null;
+    screenshotService?.stop();
+    screenshotService = null;
 
-    await _recordingManager?.stopAllAndUpload();
-    _recordingManager = null;
+    await recordingManager?.stopAllAndUpload();
+    recordingManager = null;
 
-    await _socketManager?.disconnect();
-    _socketManager = null;
+    await socketManager?.disconnect();
+    socketManager = null;
 
     _tokenWatcher?.stop();
     _tokenWatcher = null;
 
     status.value = AppStatus.idle;
-    logger.info('[AppFlow] Shutdown complete.');
   }
 }

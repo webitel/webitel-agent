@@ -7,7 +7,7 @@ import 'package:webitel_desk_track/presentation/theme/text_style.dart';
 
 class LoginWebView extends StatefulWidget {
   final String url;
-  final IStorageService storage; // Injected storage interface
+  final IStorageService storage;
 
   const LoginWebView({super.key, required this.url, required this.storage});
 
@@ -26,13 +26,6 @@ class _LoginWebViewState extends State<LoginWebView> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: const Text('Login'),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: () => Navigator.of(context).pop(false),
-        ),
-      ),
       body: Stack(
         children: [
           InAppWebView(
@@ -41,22 +34,24 @@ class _LoginWebViewState extends State<LoginWebView> {
             ),
             initialSettings: InAppWebViewSettings(
               javaScriptEnabled: true,
+              mediaPlaybackRequiresUserGesture: false,
               useShouldOverrideUrlLoading: true,
               clearCache: true,
               cacheEnabled: false,
               allowsInlineMediaPlayback: true,
+              useOnLoadResource: true,
             ),
             onWebViewCreated: (controller) {
               _controller = controller;
             },
             onLoadStart: (controller, url) {
-              setState(() => _loading = true);
+              _loading = true;
+              setState(() {});
             },
             onLoadStop: (controller, url) async {
-              setState(() {
-                _loading = false;
-                _hasError = false;
-              });
+              _loading = false;
+              _hasError = false;
+              setState(() {});
 
               if (url != null && !_tokenHandled) {
                 await _handleTokenFromUri(Uri.parse(url.toString()));
@@ -65,99 +60,101 @@ class _LoginWebViewState extends State<LoginWebView> {
             shouldOverrideUrlLoading: (controller, navigationAction) async {
               final uri = navigationAction.request.url;
               if (uri != null && !_tokenHandled) {
-                final handled = await _handleTokenFromUri(uri);
-                if (handled) return NavigationActionPolicy.CANCEL;
+                await _handleTokenFromUri(uri);
               }
               return NavigationActionPolicy.ALLOW;
             },
             onReceivedError: (controller, request, error) {
-              if (request.isForMainFrame == true) {
-                setState(() {
-                  _hasError = true;
-                  _loading = false;
-                });
+              if (request.isForMainFrame!) {
+                _hasError = true;
+                _loading = false;
+                setState(() {});
               }
+
               logger.error(
-                '[WebView] Error: ${error.description} on ${request.url}',
+                'WebView Error: URL=${request.url}, Description=${error.description}',
               );
             },
             onReceivedHttpError: (controller, request, response) {
-              if (request.isForMainFrame == true &&
-                  (response.statusCode ?? 0) >= 400) {
-                setState(() {
-                  _hasError = true;
-                  _loading = false;
-                });
+              if (request.isForMainFrame! && response.statusCode! >= 400) {
+                _hasError = true;
+                _loading = false;
+                setState(() {});
               }
+
+              logger.error(
+                'HTTP Error: ${response.statusCode} ${response.reasonPhrase} on ${request.url}',
+              );
+            },
+            onConsoleMessage: (controller, message) {
+              logger.debug('WebView console: ${message.message}');
             },
           ),
 
           if (_loading) const Center(child: CircularProgressIndicator()),
 
-          if (_hasError) _buildErrorPlaceholder(),
+          if (_hasError)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      size: 48,
+                      color: Colors.red,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      Defaults.captureTitle,
+                      style: AppTextStyles.captureTitle,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      Defaults.captureSubtitle,
+                      style: AppTextStyles.captureSubtitle,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+                    ElevatedButton(
+                      onPressed: () {
+                        _controller?.reload();
+                        setState(() {
+                          _hasError = false;
+                          _loading = true;
+                        });
+                      },
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
 
-  Widget _buildErrorPlaceholder() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 48, color: Colors.red),
-            const SizedBox(height: 12),
-            Text(
-              Defaults.captureTitle,
-              style: AppTextStyles.captureTitle,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              Defaults.captureSubtitle,
-              style: AppTextStyles.captureSubtitle,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: () {
-                setState(() {
-                  _hasError = false;
-                  _loading = true;
-                });
-                _controller?.reload();
-              },
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Extracts token from URI and saves it via the injected storage.
-  /// Returns true if the token was found and handled.
-  Future<bool> _handleTokenFromUri(Uri uri) async {
+  Future<void> _handleTokenFromUri(Uri uri) async {
+    logger.debug('Checking URI for accessToken: $uri');
     final token = uri.queryParameters['accessToken'];
 
     if (token != null && token.isNotEmpty) {
       _tokenHandled = true;
-      logger.info('[WebView] Access token intercepted.');
+      logger.debug('Found token: $token');
 
       try {
         await widget.storage.writeAccessToken(token);
+        logger.info('Token saved successfully.');
 
         if (mounted) {
           Navigator.of(context).pop(true);
         }
-        return true;
       } catch (e, st) {
-        logger.error('[WebView] Failed to save token', e, st);
-        _tokenHandled = false; // Allow retry if saving failed
+        logger.error('Failed to save token: $e\n$st');
       }
     }
-    return false;
   }
 }

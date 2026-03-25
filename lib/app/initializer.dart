@@ -1,65 +1,65 @@
 import 'package:flutter/material.dart';
+import 'package:webitel_desk_track/app/flow.dart';
 import 'package:webitel_desk_track/config/service.dart';
-import 'package:webitel_desk_track/service/tray/tray.dart';
-import 'package:window_manager/window_manager.dart';
-
 import 'package:webitel_desk_track/core/logger/logger.dart';
 import 'package:webitel_desk_track/presentation/page/main.dart';
 import 'package:webitel_desk_track/presentation/page/missing_config.dart';
 import 'package:webitel_desk_track/service/ffmpeg/manager/manager.dart';
-import 'package:webitel_desk_track/app/flow.dart';
+import 'package:webitel_desk_track/service/tray/tray.dart';
+import 'package:window_manager/window_manager.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 class AppInitializer {
-  /// Main bootstrap sequence to prepare the environment and launch the UI
   static Future<void> run() async {
     logger.info('[AppInitializer] Bootstrap sequence started');
 
-    // 1. Desktop window configuration
+    // 1. Window Configuration
+    // [GUARD] Ensure window is initialized before any UI logic
     await windowManager.ensureInitialized();
     await windowManager.setPreventClose(true);
 
-    // 2. Load application configuration
+    // 2. Load Config & Init Logger
     final config = await AppConfig.load();
     await logger.init(config);
 
-    // 3. Initialize System Tray with the shared storage from AppFlow
-    // We use the storage instance from AppFlow to maintain consistency
+    // 3. System Tray Initialization
+    // [LOGIC] Using the storage instance directly from AppFlow to ensure consistency
     await TrayService.init(AppFlow.instance.storage);
 
     if (config != null) {
-      logger.info('[AppInitializer] Valid config found, launching AppRoot');
-
-      // Initialize media processing tools
+      // 4. Heavy services setup
       FFmpegManager.instance.init();
 
       runApp(const AppRoot());
 
-      // Start background services after the first frame is rendered
+      // [LOGIC] Start the main application flow after the first frame is rendered
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         await AppFlow.instance.start();
       });
     } else {
-      logger.warn('[AppInitializer] Config missing, launching placeholder UI');
+      // 5. Fallback if config is missing (e.g., fresh install)
       runApp(const MissingConfigRoot());
 
-      // Set up a listener for manual configuration uploads via Tray
       TrayService.instance.onConfigUploaded = () async {
         final uploaded = await AppConfig.load();
         if (uploaded != null) {
           await logger.init(uploaded);
           _restartApp();
+        } else {
+          logger.error(
+            '[AppInitializer] Config upload detected but failed to load',
+          );
         }
       };
     }
   }
 
-  /// Re-triggers the application flow after a configuration update
+  /// Performs a clean restart of the application logic.
+  /// [LOGIC] Gracefully shuts down existing instances before re-running flow.
   static Future<void> _restartApp() async {
-    logger.info('[AppInitializer] Restarting application via config update');
+    logger.warn('[AppInitializer] Restarting application...');
 
-    // Gracefully stop all existing services
     await AppFlow.instance.shutdown();
 
     runApp(const AppRoot());
@@ -70,17 +70,15 @@ class AppInitializer {
   }
 }
 
-/// A gateway widget that switches UI based on the authentication status
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
 
   @override
   Widget build(BuildContext context) {
+    // [LOGIC] Listen to the centralized status provided by AppFlow singleton
     return ValueListenableBuilder<AppStatus>(
       valueListenable: AppFlow.instance.status,
       builder: (context, status, child) {
-        logger.debug('[AuthGate] Status update: $status');
-
         switch (status) {
           case AppStatus.ready:
             return const MainPage();
@@ -90,9 +88,19 @@ class AuthGate extends StatelessWidget {
             );
           case AppStatus.failure:
             return const Scaffold(
-              body: Center(child: Text("Authentication Failed")),
+              body: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.error_outline, color: Colors.red, size: 48),
+                    SizedBox(height: 16),
+                    Text("Authentication Failed"),
+                  ],
+                ),
+              ),
             );
           case AppStatus.idle:
+          default:
             return const Scaffold(body: SizedBox.shrink());
         }
       },
@@ -100,7 +108,7 @@ class AuthGate extends StatelessWidget {
   }
 }
 
-/// Standard root widget for the main application flow
+/// Main Application Root (used when config is present)
 class AppRoot extends StatelessWidget {
   const AppRoot({super.key});
 
@@ -109,12 +117,13 @@ class AppRoot extends StatelessWidget {
     return MaterialApp(
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
+      theme: ThemeData(useMaterial3: true),
       home: const AuthGate(),
     );
   }
 }
 
-/// Root widget used when the application lacks a valid configuration file
+/// Placeholder Root (used when config is missing)
 class MissingConfigRoot extends StatelessWidget {
   const MissingConfigRoot({super.key});
 

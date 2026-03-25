@@ -28,18 +28,25 @@ class SocketManager {
     return _socket!;
   }
 
-  /// [LOGIC] Safe connection sequence with redundancy guards
+  /// [LOGIC] Safe connection sequence with redundancy guards.
+  /// [GUARD] Sequential execution: connect -> wait for ready -> authenticate.
   Future<bool> connectAndAuthenticate() async {
     try {
       final ws = socket;
 
-      // 1. [GUARD] Physical connection
+      logger.info('[SOCKET_MGR] Starting connection sequence...');
+
+      // 1. [GUARD] Establish physical connection
       await ws.connect();
 
-      // 2. [GUARD] Wait for the socket to be ready (stream opened)
-      await ws.ready;
+      // 2. [GUARD] Wait for the stream to be fully operational
+      // This ensures 'isConnected' is true before we proceed to auth
+      await ws.ready.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw Exception('Socket ready timeout reached'),
+      );
 
-      // 3. [LOGIC] Logical authentication (now handles the internal 'hello' gate)
+      // 3. [LOGIC] Perform logical authentication (hello handshake)
       await ws.authenticate();
 
       logger.info('[SOCKET_MGR] Connection lifecycle verified.');
