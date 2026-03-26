@@ -32,24 +32,29 @@ class AppFlow extends WindowListener {
 
   IStorageService get storage => _storage;
 
+  bool _isInitializing = false;
+
   /// Entry point to start the application flow.
   Future<void> start() async {
     if (status.value == AppStatus.authenticating) return;
 
+    _isInitializing = true;
+
     status.value = AppStatus.authenticating;
     logger.info('[AppFlow] Starting application sequence...');
 
-    // [GUARD] Register listener to catch the close event
     windowManager.addListener(this);
 
     final token = await _ensureToken();
     if (token == null) {
-      logger.warn('[AppFlow] No valid token found. Aborting startup.');
       status.value = AppStatus.idle;
+      _isInitializing = false;
       return;
     }
 
     await _initializeWithToken(token);
+
+    _isInitializing = false;
   }
 
   /// [PROTOCOL] Intercept close event to perform cleanup BEFORE exit
@@ -126,6 +131,7 @@ class AppFlow extends WindowListener {
 
       if (connected) {
         final socket = socketManager!.socket;
+        socket.markAppInitialized();
         socket.initServices(screenshot: screenshotService!, storage: _storage);
         recordingManager!.attachSocket(socket);
         TrayService.instance.attachSocket(socket);

@@ -32,6 +32,8 @@ class SocketActions {
 
   // [CALLS] Call-related requests
   static const callByUser = 'call_by_user';
+
+  static const ping = 'ping';
 }
 
 WebSocketEvent eventFromString(String? value) {

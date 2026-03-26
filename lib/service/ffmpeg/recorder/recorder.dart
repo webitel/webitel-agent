@@ -133,7 +133,4 @@ class LocalVideoRecorder implements RecorderI {
     logger.info('[LocalRecorder] Running storage cleanup...');
     await _fileService.cleanupOldVideos();
   }
-
-  @override
-  void Function()? onConnectionFailed;
 }

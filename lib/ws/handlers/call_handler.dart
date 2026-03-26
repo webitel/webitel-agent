@@ -38,8 +38,8 @@ class CallHandler {
     switch (event) {
       case 'ringing':
       case 'update':
-        // if (shouldRecord &&
-        if (rootCallId != null &&
+        if (shouldRecord &&
+            rootCallId != null &&
             !_activeCalls.any((c) => c['callId'] == rootCallId)) {
           logger.info(
             '[CALL] Starting session: $rootCallId (Attempt: $attemptId)',

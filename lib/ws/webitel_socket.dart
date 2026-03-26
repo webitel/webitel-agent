@@ -68,6 +68,12 @@ class WebitelSocket {
 
   Future<void> get ready => _connection.ready;
 
+  bool _appInitialized = false;
+
+  void markAppInitialized() {
+    _appInitialized = true;
+  }
+
   void initServices({
     required ScreenshotSenderService screenshot,
     required IStorageService storage,
@@ -94,23 +100,16 @@ class WebitelSocket {
     await _connection.connect(config!.url);
   }
 
-  /// [LOGIC] Centralized Reconnection Sequence
-  /// [GUARD] Prevents multiple concurrent reconnection attempts
   Future<void> _performFullReconnect(String source) async {
-    if (_isAuthenticating) {
-      logger.warn(
-        '[SOCKET] Reconnect ($source) skipped: Already authenticating',
-      );
-      return;
-    }
+    logger.info('[SOCKET] RECONNECT_START | Source: $source');
 
-    logger.info('[SOCKET] STARTING RECONNECT SEQUENCE | Source: $source');
     try {
       await connect();
       await authenticate();
-      logger.info('[SOCKET] RECONNECT SUCCESSFUL | Source: $source');
+
+      logger.info('[SOCKET] RECONNECT_SUCCESS');
     } catch (e) {
-      logger.error('[SOCKET] RECONNECT FAILED | Source: $source | Error: $e');
+      logger.error('[SOCKET] RECONNECT_FAILED: $e');
     }
   }
 
@@ -155,6 +154,9 @@ class WebitelSocket {
     }
   }
 
+  /// [LOGIC] Sync state after reconnection.
+  /// [FIX] If the server reports NO active calls, but we have an active
+  /// WebRTC session, we terminate the recording to avoid "zombie" sessions.
   Future<void> _syncActiveState() async {
     try {
       logger.info('[SOCKET] SYNC: Requesting active calls...');
@@ -172,13 +174,20 @@ class WebitelSocket {
           );
         }
       } else {
-        logger.info('[SOCKET] SYNC: No active calls.');
-        if (_callHandler.activeCalls.isNotEmpty ||
-            _callHandler.screenRecordingActive) {
-          logger.warn('[SOCKET] SYNC_CLEANUP: Forcing stop.');
+        logger.info('[SOCKET] SYNC: No active calls reported by server.');
+
+        // [CHECK] If CallHandler thinks we are recording, but server says no calls exist
+        if (_callHandler.screenRecordingActive) {
+          logger.warn(
+            '[SOCKET] SYNC_CLEANUP: Zombie session detected. Forcing stop.',
+          );
+
+          // Clear local call states
           _callHandler.clear();
+
+          // Trigger UI/Manager to stop the WebRTC stream
           onScreenRecordStop?.call({
-            'reason': 'no_active_calls_after_reconnect',
+            'reason': 'no_active_calls_after_reconnect_sync',
           });
         }
       }
@@ -357,15 +366,55 @@ class WebitelSocket {
     Connectivity().onConnectivityChanged.listen((results) {
       final hasNetwork = !results.contains(ConnectivityResult.none);
 
-      if (hasNetwork) {
-        logger.info('[NETWORK] STATUS: RESTORED | Connectivity: $results');
-        if (!_connection.isConnected) {
-          _performFullReconnect('NETWORK_RESTORED');
+      _networkDebounce?.cancel();
+
+      _networkDebounce = Timer(const Duration(seconds: 1), () async {
+        if (hasNetwork) {
+          logger.info('[NETWORK] RESTORED: $results');
+
+          // [CRITICAL] ignore during app bootstrap
+          if (!_appInitialized) {
+            logger.debug('[NETWORK] IGNORE | app initializing');
+            return;
+          }
+
+          await _forceReconnect('NETWORK_RESTORED');
+        } else {
+          logger.warn('[NETWORK] LOST');
         }
-      } else {
-        logger.warn('[NETWORK] STATUS: LOST | Internet connection unavailable');
-      }
+      });
     });
+  }
+
+  bool _isReconnecting = false;
+  Timer? _networkDebounce;
+
+  /// [FIX] Proper reconnect without race conditions
+  Future<void> _forceReconnect(String source) async {
+    if (_isReconnecting) {
+      logger.warn('[SOCKET] RECONNECT_SKIPPED | already running');
+      return;
+    }
+
+    _isReconnecting = true;
+
+    logger.warn('[SOCKET] FORCE_RECONNECT | Source: $source');
+
+    try {
+      while (_isAuthenticating) {
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+
+      _connection.dispose(); // [KILL zombie]
+
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      await _performFullReconnect(source);
+    } catch (e) {
+      logger.error('[SOCKET] FORCE_RECONNECT_ERROR: $e');
+    } finally {
+      _isReconnecting = false;
+    }
   }
 
   void updateToken(String newToken) => _token = newToken;

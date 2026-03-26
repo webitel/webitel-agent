@@ -1,7 +1,4 @@
 abstract interface class RecorderI {
-  /// Callback triggered when the connection fails (e.g., ICE failure).
-  void Function()? onConnectionFailed;
-
   /// Starts the recording process.
   Future<void> start({required String recordingId});
 

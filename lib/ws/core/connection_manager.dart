@@ -19,37 +19,26 @@ class WsConnectionManager {
 
   bool get isConnected => _isConnected;
 
-  /// [GUARD] Barrier that waits for the physical channel to be created and ready
   Future<void> get ready async {
-    // If the manager was disposed, we shouldn't wait on an old completer
     if (_isDisposed) return;
 
-    if (_connectionCompleter == null) {
-      logger.warn(
-        '[WS_CONN] ready called before connect(). Waiting for initialization...',
-      );
-      while (_connectionCompleter == null && !_isDisposed) {
-        await Future.delayed(const Duration(milliseconds: 100));
-      }
+    while (_connectionCompleter == null && !_isDisposed) {
+      await Future.delayed(const Duration(milliseconds: 50));
     }
 
-    try {
-      await _connectionCompleter?.future;
-      await _channel?.ready;
-    } catch (e) {
-      logger.error('[WS_CONN] ready barrier failed: $e');
-    }
+    await _connectionCompleter?.future;
+    await _channel?.ready;
   }
 
   Future<void> connect(String url) async {
     if (_isConnected) return;
 
-    // [LOGIC] Reset disposed flag to allow reconnection after logout/dispose
     _isDisposed = false;
     _connectionCompleter = Completer<void>();
 
     try {
       logger.info('[WS_CONN] ATTEMPT_CONNECT: $url');
+
       _channel = WebSocketChannel.connect(Uri.parse(url));
 
       _subscription = _channel!.stream.listen(
@@ -60,44 +49,39 @@ class WsConnectionManager {
         },
         onError: (err) {
           logger.error('[WS_CONN] STREAM_ERROR: $err');
-          _handleDisconnect('STREAM_ERROR: $err');
+          _handleDisconnect('STREAM_ERROR');
         },
         onDone: () {
-          final int? closeCode = _channel?.closeCode;
-          final String? closeReason = _channel?.closeReason;
-          logger.warn(
-            '[WS_CONN] CLOSED | Code: $closeCode | Reason: ${closeReason ?? "none"}',
-          );
+          logger.warn('[WS_CONN] CLOSED');
           _handleDisconnect('SERVER_CLOSED');
         },
         cancelOnError: true,
       );
 
-      // Notify that channel object is created
       _connectionCompleter?.complete();
-
-      // Wait for actual physical handshake
       await _channel!.ready;
 
       _isConnected = true;
-      logger.info('[WS_CONN] ESTABLISHED: Handshake successful');
-    } catch (e, stackTrace) {
+      logger.info('[WS_CONN] ESTABLISHED');
+    } catch (e, st) {
       if (_connectionCompleter?.isCompleted == false) {
         _connectionCompleter?.completeError(e);
       }
-      logger.error('[WS_CONN] CONNECTION_FATAL_ERROR: $e', e, stackTrace);
-      _handleDisconnect('CONNECTION_FAILED: $e');
+
+      logger.error('[WS_CONN] CONNECT_ERROR: $e', e, st);
+      _handleDisconnect('CONNECT_FAILED');
       rethrow;
     }
   }
 
   void send(Map<String, dynamic> payload) {
-    if (_isConnected && _channel != null) {
-      try {
-        _channel!.sink.add(jsonEncode(payload));
-      } catch (e) {
-        _handleDisconnect('WRITE_ERROR');
-      }
+    if (!_isConnected || _channel == null) return;
+
+    try {
+      _channel!.sink.add(jsonEncode(payload));
+    } catch (e) {
+      logger.error('[WS_CONN] WRITE_ERROR: $e');
+      _handleDisconnect('WRITE_ERROR');
     }
   }
 
@@ -105,11 +89,13 @@ class WsConnectionManager {
     if (!_isConnected && _channel == null) return;
 
     logger.warn('[WS_CONN] DISCONNECTED | $reason');
+
     _isConnected = false;
     _connectionCompleter = null;
 
     _subscription?.cancel();
     _subscription = null;
+
     _channel?.sink.close();
     _channel = null;
 

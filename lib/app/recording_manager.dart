@@ -64,7 +64,6 @@ class RecordingManager {
 
     // Delegate creation to factory
     final recorder = _factory.create(id: id, token: token);
-    recorder.onConnectionFailed = () => _handleReconnection(id, type);
     _recorders[type] = recorder;
 
     try {
@@ -106,13 +105,6 @@ class RecordingManager {
     } finally {
       _recorders[type] = null;
     }
-  }
-
-  void _handleReconnection(String id, RecordingType type) {
-    if (_recorders[type] == null) return;
-    logger.warn('[RecordingManager] Recovery triggered for $id');
-    _onStop(id, type: type, isRecovering: true);
-    Timer(const Duration(seconds: 5), () => _onStart(id, type: type));
   }
 
   Future<void> stopAllAndUpload() async {

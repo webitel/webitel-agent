@@ -33,9 +33,6 @@ class StreamRecorder implements RecorderI {
   }) : _storage = storage;
 
   @override
-  void Function()? onConnectionFailed;
-
-  @override
   Future<void> start({required String recordingId}) async {
     // [GUARD] Ensure any previous instance is fully disposed
     await _cleanupInternal();
@@ -63,7 +60,6 @@ class StreamRecorder implements RecorderI {
             state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
           if (!_isStopping) {
             logger.warn('[StreamRecorder] ICE Connection failure detected');
-            onConnectionFailed?.call();
           }
         }
       };
