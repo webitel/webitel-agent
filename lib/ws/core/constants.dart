@@ -14,9 +14,9 @@ enum NotificationAction {
         return NotificationAction.screenShare;
       case 'screenshot':
         return NotificationAction.screenshot;
-      case 'screen_record_start':
+      case 'ss_record_start':
         return NotificationAction.screenRecordStart;
-      case 'screen_record_stop':
+      case 'ss_record_stop':
         return NotificationAction.screenRecordStop;
       default:
         return NotificationAction.unknown;

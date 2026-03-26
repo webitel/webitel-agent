@@ -43,7 +43,6 @@ class NotificationHandler {
           await screenshotService?.capture();
           break;
         case NotificationAction.screenRecordStart:
-          if (!isRecordingFromCall) onScreenRecordStart?.call(body);
           break;
         case NotificationAction.screenRecordStop:
           onScreenRecordStop?.call(body);
