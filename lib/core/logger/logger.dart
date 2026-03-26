@@ -46,19 +46,18 @@ class LoggerService {
 
   Future<void> _initFileLogging(String relativePath) async {
     try {
-      final dir =
-          await getApplicationSupportDirectory(); // Better for logs than Documents
+      // [CHANGE] Reverted back to Documents directory
+      final dir = await getApplicationDocumentsDirectory();
       final file = File("${dir.path}/$relativePath");
 
+      // [FS_LOGIC] Create directory if it doesn't exist
       await file.create(recursive: true);
       _fileSink = file.openWrite(mode: FileMode.append);
 
-      // Add a separator for new sessions
       _fileSink?.writeln(
         "\n--- NEW SESSION: ${DateTime.now().toIso8601String()} ---",
       );
     } catch (e) {
-      // Fallback to standard print if file logging fails
       if (kDebugMode) {
         print("Failed to initialize file logger: $e");
       }
