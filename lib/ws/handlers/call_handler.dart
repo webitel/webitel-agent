@@ -10,12 +10,6 @@ class CallHandler {
   List<Map<String, dynamic>> get postProcessing => _postProcessing;
   bool get screenRecordingActive => _screenRecordingActive;
 
-  final _uuidRegExp = RegExp(
-    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
-  );
-
-  bool _isValidUuid(String? id) => id != null && _uuidRegExp.hasMatch(id);
-
   void handleCallEvent(
     Map<String, dynamic> data,
     Function(bool active, String? callId) onUpdate,
@@ -27,17 +21,12 @@ class CallHandler {
     final rawCallId = call['id']?.toString();
     final recordScreen = call['data']?['record_screen'] == true;
 
-    // if (!_isValidUuid(rawCallId)) {
-    //   logger.warn('[CALL] INVALID_UUID received: $rawCallId');
-    //   return;
-    // }
-
     switch (event) {
       case 'ringing':
       case 'update':
-        if (!_activeCalls.any((c) => c['callId'] == rawCallId)) {
-          // if (recordScreen &&
-          //     !_activeCalls.any((c) => c['callId'] == rawCallId)) {
+        // if (!_activeCalls.any((c) => c['callId'] == rawCallId)) {
+        if (recordScreen &&
+            !_activeCalls.any((c) => c['callId'] == rawCallId)) {
           logger.info('[CALL] STARTING record for CallID: $rawCallId');
           _activeCalls.add({'callId': rawCallId});
         }
