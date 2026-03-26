@@ -16,7 +16,7 @@ import 'package:window_manager/window_manager.dart';
 
 enum AppStatus { idle, authenticating, ready, failure }
 
-class AppFlow {
+class AppFlow extends WindowListener {
   // [LOGIC] Private constructor for Singleton pattern
   AppFlow._();
   static final AppFlow instance = AppFlow._();
@@ -30,7 +30,6 @@ class AppFlow {
 
   final ValueNotifier<AppStatus> status = ValueNotifier(AppStatus.idle);
 
-  /// Getter for storage if needed externally (e.g., for Tray initialization)
   IStorageService get storage => _storage;
 
   /// Entry point to start the application flow.
@@ -40,6 +39,9 @@ class AppFlow {
     status.value = AppStatus.authenticating;
     logger.info('[AppFlow] Starting application sequence...');
 
+    // [GUARD] Register listener to catch the close event
+    windowManager.addListener(this);
+
     final token = await _ensureToken();
     if (token == null) {
       logger.warn('[AppFlow] No valid token found. Aborting startup.');
@@ -48,6 +50,26 @@ class AppFlow {
     }
 
     await _initializeWithToken(token);
+  }
+
+  /// [PROTOCOL] Intercept close event to perform cleanup BEFORE exit
+  @override
+  void onWindowClose() async {
+    logger.warn('[AppFlow] Close requested. Suspending exit for cleanup...');
+
+    // [GUARD] Ensure we have time to finish async tasks like WebRTC stops or uploads
+    await windowManager.setPreventClose(true);
+
+    try {
+      // [LOGIC] Execute full cleanup (Stop WebRTC, Sockets, and File uploads)
+      await shutdown();
+      logger.info('[AppFlow] Cleanup successful. Terminating process.');
+    } catch (e, st) {
+      logger.error('[AppFlow] Cleanup failed during close', e, st);
+    } finally {
+      // [FINAL] Fully close the application and kill the process
+      exit(0);
+    }
   }
 
   /// Validates existing token or performs fresh login.
@@ -85,17 +107,14 @@ class AppFlow {
     try {
       logger.info('[AppFlow] Initializing core modules...');
 
-      // 1. Screenshot Service
       screenshotService ??= ScreenshotSenderService(
         baseUrl: AppConfig.instance.baseUrl,
         storage: _storage,
       );
       screenshotService!.start();
 
-      // 2. Recording Manager
       recordingManager ??= RecordingManager(storage: _storage);
 
-      // 3. Socket Manager
       socketManager ??= SocketManager(
         baseUrl: AppConfig.instance.baseUrl,
         wsUrl: AppConfig.instance.webitelWsUrl,
@@ -107,13 +126,10 @@ class AppFlow {
 
       if (connected) {
         final socket = socketManager!.socket;
-
-        // [LOGIC] Link all components to the active socket
         socket.initServices(screenshot: screenshotService!, storage: _storage);
         recordingManager!.attachSocket(socket);
         TrayService.instance.attachSocket(socket);
 
-        // 4. Token Watcher
         _tokenWatcher ??= TokenWatcher(
           baseUrl: AppConfig.instance.baseUrl,
           onExpired: interactiveRelogin,
@@ -133,7 +149,6 @@ class AppFlow {
     }
   }
 
-  /// Forces UI focus and requests new credentials.
   Future<void> interactiveRelogin() async {
     logger.info('[AppFlow] Interactive relogin requested');
     await _storage.deleteAccessToken();
@@ -149,9 +164,7 @@ class AppFlow {
     final ok = await loginService.performLogin();
 
     if (ok) {
-      // [GUARD] Delay to ensure WebView is fully disposed before new socket init.
       await Future.delayed(const Duration(milliseconds: 800));
-
       final newToken = await _storage.readAccessToken();
       if (newToken != null) await _initializeWithToken(newToken);
     }
@@ -161,12 +174,16 @@ class AppFlow {
   Future<void> shutdown() async {
     logger.info('[AppFlow] Performing graceful shutdown...');
 
+    windowManager.removeListener(this);
+
     screenshotService?.stop();
     screenshotService = null;
 
+    // [GUARD] Critical: Stops WebRTC streams and finishes file writing
     await recordingManager?.stopAllAndUpload();
     recordingManager = null;
 
+    // [LOGIC] Sends 'offline' state to server before closing
     await socketManager?.disconnect();
     socketManager = null;
 

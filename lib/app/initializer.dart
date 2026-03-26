@@ -17,6 +17,8 @@ class AppInitializer {
     // 1. Window Configuration
     // [GUARD] Ensure window is initialized before any UI logic
     await windowManager.ensureInitialized();
+
+    // [LOGIC] Set the flag that prevents the app from closing on 'X'
     await windowManager.setPreventClose(true);
 
     // 2. Load Config & Init Logger
@@ -24,11 +26,11 @@ class AppInitializer {
     await logger.init(config);
 
     // 3. System Tray Initialization
-    // [LOGIC] Using the storage instance directly from AppFlow to ensure consistency
+    // [LOGIC] Pass storage directly for consistent auth handling
     await TrayService.init(AppFlow.instance.storage);
 
     if (config != null) {
-      // 4. Heavy services setup
+      // 4. Heavy services setup (FFmpeg)
       FFmpegManager.instance.init();
 
       runApp(const AppRoot());
@@ -38,7 +40,7 @@ class AppInitializer {
         await AppFlow.instance.start();
       });
     } else {
-      // 5. Fallback if config is missing (e.g., fresh install)
+      // 5. Fallback if config is missing (fresh install)
       runApp(const MissingConfigRoot());
 
       TrayService.instance.onConfigUploaded = () async {
@@ -55,8 +57,7 @@ class AppInitializer {
     }
   }
 
-  /// Performs a clean restart of the application logic.
-  /// [LOGIC] Gracefully shuts down existing instances before re-running flow.
+  /// Gracefully shuts down existing instances before re-running flow.
   static Future<void> _restartApp() async {
     logger.warn('[AppInitializer] Restarting application...');
 
@@ -108,7 +109,6 @@ class AuthGate extends StatelessWidget {
   }
 }
 
-/// Main Application Root (used when config is present)
 class AppRoot extends StatelessWidget {
   const AppRoot({super.key});
 
@@ -123,7 +123,6 @@ class AppRoot extends StatelessWidget {
   }
 }
 
-/// Placeholder Root (used when config is missing)
 class MissingConfigRoot extends StatelessWidget {
   const MissingConfigRoot({super.key});
 
