@@ -208,7 +208,11 @@ class ScreenshotSenderService {
         return;
       }
 
-      final filename = 'scr_${agentId}_${now.millisecondsSinceEpoch}.png';
+      final String timestamp =
+          "${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}";
+
+      final filename = 'scr_ss_${agentId}_$timestamp.png';
+
       Uint8List? bytes;
 
       // Platform specific capture logic
