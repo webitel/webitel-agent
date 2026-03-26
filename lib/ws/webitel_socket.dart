@@ -220,9 +220,6 @@ class WebitelSocket {
         _callHandler.handleChannelEvent(data, _onRecordingStateChanged);
         break;
       case WebSocketEvent.notification:
-        if (!(_screenshotService?.isControlEnabled ?? false)) return;
-        _notificationHandler.isRecordingFromCall =
-            _callHandler.screenRecordingActive;
         await _notificationHandler.handle(data);
         break;
       default:
