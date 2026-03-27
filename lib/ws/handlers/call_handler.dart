@@ -9,8 +9,7 @@ class CallHandler {
   List<Map<String, dynamic>> get postProcessing => _postProcessing;
   bool get screenRecordingActive => _screenRecordingActive;
 
-  /// Validates UUID format according to RFC 4122 (8-4-4-4-12 hex).
-  /// This ensures compatibility with backend storage and History filters.
+  /// Validates UUID format according to RFC 4122.
   bool _isValidUuid(String? uuid) {
     if (uuid == null) return false;
     return RegExp(
@@ -18,6 +17,7 @@ class CallHandler {
     ).hasMatch(uuid);
   }
 
+  /// Processes call-related events from the WebSocket.
   void handleCallEvent(
     Map<String, dynamic> data,
     void Function(bool active, String? callId) onUpdate,
@@ -27,28 +27,29 @@ class CallHandler {
 
     final event = call['event'];
     final callId = call['id']?.toString();
-    final parentId = call['data']?['parent_id']?.toString();
+
+    // Support both nested and flat parent_id structures from Webitel events
+    final parentId =
+        (call['parent_id'] ?? call['data']?['parent_id'])?.toString();
     final attemptId = call['data']?['queue']?['attempt_id']?.toString();
     final shouldRecord = call['data']?['record_screen'] == true;
 
-    // Logic for Root ID resolution
+    // Resolve Root ID: Use parent_id if valid, otherwise fallback to callId
     final bool parentIsValid = _isValidUuid(parentId);
     final rootCallId = parentIsValid ? parentId : callId;
 
-    // Detailed descriptive logging for traceability
     logger.debug(
-      '[CALL_EVENT] Incoming: $event | call_id: $callId | parent_id: $parentId (valid: $parentIsValid) | record_screen: $shouldRecord',
+      '[CALL_EVENT] Incoming: $event | call_id: $callId | root_id: $rootCallId | record: $shouldRecord',
     );
 
     switch (event) {
       case 'ringing':
+      case 'active':
       case 'update':
-        // if (shouldRecord &&
         if (rootCallId != null &&
             !_activeCalls.any((c) => c['callId'] == rootCallId)) {
           logger.info(
-            '[CALL] Starting session. Resolved Root ID: $rootCallId '
-            '${parentIsValid ? "(from parent_id)" : "(from call_id)"} | Attempt: $attemptId',
+            '[CALL] Starting session. Root: $rootCallId | Attempt: $attemptId',
           );
 
           _activeCalls.add({
@@ -61,10 +62,11 @@ class CallHandler {
 
       case 'hangup':
         if (rootCallId != null) {
-          logger.info(
-            '[CALL] Hangup received. Cleaning up session: $rootCallId',
+          logger.info('[CALL] Hangup: Cleaning up session $rootCallId');
+          // Cleanup using both IDs to ensure no zombie sessions remain
+          _activeCalls.removeWhere(
+            (c) => c['callId'] == rootCallId || c['segment_id'] == callId,
           );
-          _activeCalls.removeWhere((c) => c['callId'] == rootCallId);
         }
         break;
     }
@@ -72,6 +74,7 @@ class CallHandler {
     _evaluateState(onUpdate, rootCallId);
   }
 
+  /// Processes agent channel status events (Wrap-up, Idle, etc.).
   void handleChannelEvent(
     Map<String, dynamic> data,
     void Function(bool active, String? callId) onUpdate,
@@ -84,32 +87,23 @@ class CallHandler {
     final attemptId =
         (distribute['attempt_id'] ?? channel['attempt_id'])?.toString();
 
-    logger.debug('[CHANNEL_EVENT] status: $status | attempt_id: $attemptId');
-
     if (attemptId == null) return;
 
-    // Track sessions requiring post-call work (reporting/wrap-up).
+    // Handle Wrap-up/Reporting state tracking
     if (distribute['has_reporting'] == true &&
         !_postProcessing.any((c) => c['attempt_id'] == attemptId)) {
-      logger.info(
-        '[CHANNEL] Post-processing started for attempt: $attemptId (reporting required)',
-      );
       _postProcessing.add({'attempt_id': attemptId});
     }
 
-    // Clear post-processing on transition to idle states.
+    // Clear post-processing when agent returns to idle states
     if (const ['missed', 'waiting', 'wrap_time'].contains(status)) {
-      if (_postProcessing.any((c) => c['attempt_id'] == attemptId)) {
-        logger.info(
-          '[CHANNEL] Post-processing completed. Agent moved to $status state for attempt: $attemptId',
-        );
-        _postProcessing.removeWhere((c) => c['attempt_id'] == attemptId);
-      }
+      _postProcessing.removeWhere((c) => c['attempt_id'] == attemptId);
     }
 
     _evaluateState(onUpdate, null);
   }
 
+  /// Evaluates if screen recording should be active based on current calls and post-processing.
   void _evaluateState(
     void Function(bool active, String? callId) onUpdate,
     String? callId,
@@ -120,17 +114,14 @@ class CallHandler {
     if (shouldBeActive != _screenRecordingActive) {
       _screenRecordingActive = shouldBeActive;
       logger.info(
-        '[STATE] Recording logic updated: active=$_screenRecordingActive '
-        '(ActiveCalls: ${_activeCalls.length}, PostProc: ${_postProcessing.length})',
+        '[STATE] Update: active=$_screenRecordingActive (Calls: ${_activeCalls.length}, Post: ${_postProcessing.length})',
       );
       onUpdate(_screenRecordingActive, callId);
     }
   }
 
+  /// Full reset of the handler state.
   void clear() {
-    logger.warn(
-      '[STATE] Force clearing all session tracking arrays (ActiveCalls & PostProcessing)',
-    );
     _activeCalls.clear();
     _postProcessing.clear();
     _screenRecordingActive = false;
