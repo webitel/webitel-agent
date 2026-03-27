@@ -62,6 +62,20 @@ class ScreenshotSenderService {
     logger.info('[SCREENSHOT_SERVICE] Stopped');
   }
 
+  /// Helper to generate a standardized filename for both manual and auto captures
+  /// Format: scr_ss_[agentId]_[YYYYMMDD_HHMMSS].png
+  String _generateFilename(int agentId, DateTime time) {
+    final String timestamp =
+        "${time.year}"
+        "${time.month.toString().padLeft(2, '0')}"
+        "${time.day.toString().padLeft(2, '0')}_"
+        "${time.hour.toString().padLeft(2, '0')}"
+        "${time.minute.toString().padLeft(2, '0')}"
+        "${time.second.toString().padLeft(2, '0')}";
+
+    return 'scr_ss_${agentId}_$timestamp.png';
+  }
+
   /// Fetches latest agent configuration and screenshot intervals from API
   Future<void> _fetchSettings() async {
     try {
@@ -183,12 +197,14 @@ class ScreenshotSenderService {
     }
   }
 
-  /// Triggers a screen capture and uploads it to the storage server
+  /// Triggers a screen capture and uploads it to the storage server.
+  /// Used for both automated timer-based captures and manual triggers.
   Future<void> capture() async {
     if (_screenshotInProgress) return;
 
     final now = DateTime.now();
-    // Prevent overlapping captures or rapid firing
+
+    // Guard: Prevent overlapping captures or rapid firing (debounce)
     if (_lastScreenshotAt != null &&
         now.difference(_lastScreenshotAt!) < _minScreenshotGap) {
       return;
@@ -208,10 +224,8 @@ class ScreenshotSenderService {
         return;
       }
 
-      final String timestamp =
-          "${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}";
-
-      final filename = 'scr_ss_${agentId}_$timestamp.png';
+      // Generate standardized filename
+      final filename = _generateFilename(agentId, now);
 
       Uint8List? bytes;
 
@@ -223,15 +237,17 @@ class ScreenshotSenderService {
         }
         final dir = await getTemporaryDirectory();
         final path = '${dir.path}/$filename';
+
         await ScreenCapturer.instance.capture(
           mode: CaptureMode.screen,
           silent: true,
           imagePath: path,
         );
+
         final file = File(path);
         if (await file.exists()) {
           bytes = await file.readAsBytes();
-          await file.delete();
+          await file.delete(); // Cleanup temp file
         }
       } else if (defaultTargetPlatform == TargetPlatform.windows) {
         bytes = await DesktopScreenshot().getScreenshot();
@@ -242,6 +258,7 @@ class ScreenshotSenderService {
         return;
       }
 
+      // Construct upload URI with query parameters
       final uri = Uri.parse(
         '$baseUrl/api/storage/file/$agentId/upload',
       ).replace(
@@ -252,6 +269,7 @@ class ScreenshotSenderService {
         },
       );
 
+      // Perform HTTP POST upload
       final response = await http
           .post(uri, headers: {'Content-Type': 'image/png'}, body: bytes)
           .timeout(const Duration(seconds: 30));

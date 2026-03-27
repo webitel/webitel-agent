@@ -32,7 +32,8 @@ class ScreenStreamer {
     this.localStream,
   });
 
-  /// Factory method to build from screen_share notification
+  /// Factory method to build a streamer instance from a screen_share notification.
+  /// This handles the initial resource cleanup and platform-specific capture.
   static Future<ScreenStreamer> fromNotification({
     required Map<String, dynamic> notif,
     required LoggerService logger,
@@ -51,12 +52,14 @@ class ScreenStreamer {
       );
     }
 
-    logger.info('[ScreenStreamer] screen_share received, parent_id=$parentId');
+    logger.info(
+      '[ScreenStreamer] Initiating screen share for parent_id=$parentId',
+    );
 
-    // [GUARD] Ensure no stale streaming processes are running before starting new ones
+    // [CLEANUP] Ensure no stale streaming processes are running to avoid device conflicts
     await stopStereoAudioFFmpeg(FFmpegMode.streaming);
 
-    // Create PeerConnection with configured ICE servers
+    // Initialize PeerConnection with ICE configuration (STUN/TURN)
     final pc = await createPeerConnection({
       'iceServers': AppConfig.instance.webrtcIceServers,
       'iceTransportPolicy': AppConfig.instance.webrtcIceTransportPolicy,
@@ -66,16 +69,22 @@ class ScreenStreamer {
     MediaStream? localStream;
 
     try {
-      // [LOGIC] Capture screens based on host platform
+      // [MEDIA_CAPTURE] Execute platform-specific screen and audio capture
       if (Platform.isWindows) {
+        logger.debug(
+          '[ScreenStreamer] Platform: Windows. Starting multi-screen FFmpeg capture.',
+        );
         localStreams = await captureAllDesktopScreensWindows(
           FFmpegMode.streaming,
           pc,
         );
       } else {
+        logger.debug(
+          '[ScreenStreamer] Platform: macOS/Linux. Using standard media devices.',
+        );
         localStream = await captureDesktopScreen();
         if (localStream == null) {
-          throw Exception('Failed to capture local screen');
+          throw Exception('Failed to obtain local media stream');
         }
       }
 
@@ -89,10 +98,17 @@ class ScreenStreamer {
         onAccept: onAccept,
       );
 
+      // Start the WebRTC handshake process (Offer -> Answer)
       await streamer._init(pc: pc);
 
       final answer = await streamer.localDescription;
       if (answer != null) {
+        // [SDP_DIAGNOSTICS] Verify if the Answer contains video media sections
+        final hasVideo = answer.sdp?.contains('m=video');
+        logger.info(
+          '[ScreenStreamer] SDP Answer generated. Video detected: $hasVideo',
+        );
+
         await onAccept('ss_accept', {
           'id': notif['id'],
           'sdp': answer.sdp,
@@ -104,66 +120,86 @@ class ScreenStreamer {
 
       return streamer;
     } catch (e, st) {
-      logger.error('[ScreenStreamer] Factory build failed', e, st);
-      // Immediate cleanup on failure
+      logger.error(
+        '[ScreenStreamer] Critical failure during factory initialization',
+        e,
+        st,
+      );
       pc.close();
       pc.dispose();
       rethrow;
     }
   }
 
+  /// Internal initialization of the PeerConnection and track management
   Future<void> _init({required RTCPeerConnection pc}) async {
     _pc = pc;
 
     try {
+      // [MONITOR] Track connection state changes for debugging
       _pc!.onConnectionState = (state) {
-        logger.debug('[ScreenStreamer] Connection state: ${state.name}');
+        logger.debug('[ScreenStreamer] Connection State Change: ${state.name}');
         if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed &&
             !_isClosing) {
-          logger.warn('[ScreenStreamer] Connection failed, cleaning up');
           close('PeerConnectionStateFailed');
         }
       };
 
       _pc!.onIceConnectionState = (state) {
-        logger.debug('[ScreenStreamer] ICE state: ${state.name}');
+        logger.debug('[ScreenStreamer] ICE Connection State: ${state.name}');
         if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected &&
             !_isClosing) {
-          // Note: In streaming mode, we often prefer to close and let the admin reconnect
           close('IceConnectionDisconnected');
         }
       };
 
-      // [PROTOCOL] Set Remote Offer from the signaling message
-      await _pc!.setRemoteDescription(RTCSessionDescription(peerSdp, 'offer'));
+      _pc!.onSignalingState = (state) {
+        logger.debug('[ScreenStreamer] Signaling State: ${state.name}');
+      };
 
-      // [PROTOCOL] Attach local tracks to PC
+      // [SDP_HANDSHAKE] Step 1: Set Remote Offer from signaling server
+      await _pc!.setRemoteDescription(RTCSessionDescription(peerSdp, 'offer'));
+      logger.debug(
+        '[ScreenStreamer] Remote description (offer) set successfully',
+      );
+
+      // [TRACK_MANAGEMENT] Attach captured streams to the PeerConnection
       if (Platform.isWindows && localStreams != null) {
         for (final stream in localStreams!) {
           for (final track in stream.getTracks()) {
+            logger.debug(
+              '[ScreenStreamer] Attaching track: kind=${track.kind}, id=${track.id}, enabled=${track.enabled}',
+            );
             await _pc!.addTrack(track, stream);
           }
         }
       } else if (localStream != null) {
         for (final track in localStream!.getTracks()) {
+          logger.debug(
+            '[ScreenStreamer] Attaching track: kind=${track.kind}, id=${track.id}',
+          );
           await _pc!.addTrack(track, localStream!);
         }
       }
 
-      // [PROTOCOL] Create Local Answer
+      // [SDP_HANDSHAKE] Step 2: Create and set Local Answer
       final answer = await _pc!.createAnswer();
       await _pc!.setLocalDescription(answer);
+      logger.debug(
+        '[ScreenStreamer] Local description (answer) set successfully',
+      );
 
-      // [WAIT] Wait for ICE gathering to complete (crucial for NAT traversal)
+      // [ICE_GATHERING] Wait for candidates to be gathered before sending SDP to avoid NAT issues
       await _waitForIceGatheringComplete(_pc!);
 
-      logger.info('[ScreenStreamer] Protocol handshake complete');
+      logger.info('[ScreenStreamer] WebRTC Handshake procedure finalized');
     } catch (e, st) {
       logger.error('[ScreenStreamer] Handshake initialization failed:', e, st);
       close('HandshakeError: $e');
     }
   }
 
+  /// Blocks until ICE gathering is complete or timeout is reached (approx 3 seconds)
   Future<void> _waitForIceGatheringComplete(RTCPeerConnection pc) async {
     int waitCount = 0;
     while (pc.iceGatheringState !=
@@ -172,9 +208,13 @@ class ScreenStreamer {
       await Future.delayed(const Duration(milliseconds: 100));
       waitCount++;
     }
+    logger.debug(
+      '[ScreenStreamer] ICE Gathering finished with state: ${pc.iceGatheringState.toString()} after ${waitCount * 100}ms',
+    );
+
     if (waitCount >= 30) {
       logger.warn(
-        '[ScreenStreamer] ICE gathering reached timeout, sending partial SDP',
+        '[ScreenStreamer] ICE gathering timed out; sending partial SDP candidates.',
       );
     }
   }
@@ -183,27 +223,28 @@ class ScreenStreamer {
     return await _pc?.getLocalDescription();
   }
 
-  /// Public close method to release all resources
+  /// Public method to terminate the stream and cleanup all hardware/network resources
   void close(String reason) {
     if (_isClosing) return;
     _isClosing = true;
 
-    logger.warn('[ScreenStreamer] Closing session. Reason: $reason');
+    logger.warn('[ScreenStreamer] Shutting down session. Reason: $reason');
     _cleanupInternal();
     onClose();
   }
 
-  /// [LOGIC] Centralized resource teardown
+  /// Internal resource teardown: FFmpeg, MediaTracks, and PeerConnection
   void _cleanupInternal() {
-    // 1. Terminate audio streaming FFmpeg process
+    // 1. Kill the audio mixing/streaming process
     stopStereoAudioFFmpeg(FFmpegMode.streaming);
 
     try {
-      // 2. Explicitly stop and dispose all media tracks
+      // 2. Stop and dispose all active media tracks to release camera/mic/screen handles
       if (localStreams != null) {
         for (final s in localStreams!) {
           for (final t in s.getTracks()) {
             t.stop();
+            logger.debug('[ScreenStreamer] Stopped track: ${t.id}');
           }
           s.dispose();
         }
@@ -216,16 +257,16 @@ class ScreenStreamer {
         localStream!.dispose();
       }
 
-      // 3. Close the WebRTC PeerConnection
+      // 3. Close the WebRTC socket/connection
       if (_pc != null) {
         _pc!.close();
         _pc!.dispose();
         _pc = null;
       }
 
-      logger.info('[ScreenStreamer] Teardown finished');
+      logger.info('[ScreenStreamer] Clean teardown successful');
     } catch (e) {
-      logger.error('[ScreenStreamer] Cleanup error:', e);
+      logger.error('[ScreenStreamer] Error during teardown sequence:', e);
     }
   }
 }
