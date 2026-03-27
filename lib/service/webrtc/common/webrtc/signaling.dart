@@ -5,23 +5,32 @@ import 'package:webitel_desk_track/core/logger/logger.dart';
 import 'package:webitel_desk_track/core/storage/interface.dart';
 
 /// Sends an SDP offer to the signaling server and returns the answer with a stream ID.
+/// This function coordinates the WebRTC handshake and defines the recording filename.
 Future<({RTCSessionDescription answer, String streamId})> sendSDPToServer({
   required String url,
   required String token,
   required RTCSessionDescription offer,
   required String id,
-  required IStorageService storage, // Injected storage interface
+  required IStorageService storage,
 }) async {
-  // Use the injected storage to get the agent ID
-  final agentId = await storage.readAgentId() ?? 'unknown_user';
+  // Retrieve the agent ID from local storage for identification
+  final agentId = await storage.readAgentId() ?? 0;
 
   final now = DateTime.now();
-  final timestamp =
-      "${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_"
-      "${now.hour.toString().padLeft(2, '0')}-${now.minute.toString().padLeft(2, '0')}";
 
-  // Example: recording_ss_123_20260325_18-30.mp4
-  final fileName = 'recording_ss_${agentId}_$timestamp.mp4';
+  /// Standardized timestamp format: YYYYMMDD_HHMMSS
+  /// Matches the format used in ScreenshotSenderService exactly.
+  final String timestamp =
+      "${now.year}"
+      "${now.month.toString().padLeft(2, '0')}"
+      "${now.day.toString().padLeft(2, '0')}_"
+      "${now.hour.toString().padLeft(2, '0')}"
+      "${now.minute.toString().padLeft(2, '0')}"
+      "${now.second.toString().padLeft(2, '0')}";
+
+  // Final filename format: scr_ss_[agentId]_[timestamp].mp4
+  // Using 'scr_ss' prefix to match manual/auto screenshot naming convention.
+  final fileName = 'scr_vc_${agentId}_$timestamp.mp4';
 
   final payload = {
     'type': offer.type,
@@ -31,7 +40,7 @@ Future<({RTCSessionDescription answer, String streamId})> sendSDPToServer({
   };
 
   try {
-    logger.debug('[Signaling] Sending SDP offer to $url...');
+    logger.debug('[Signaling] Sending SDP offer for file: $fileName to $url');
 
     final response = await http
         .post(
@@ -66,14 +75,15 @@ Future<({RTCSessionDescription answer, String streamId})> sendSDPToServer({
   }
 }
 
-/// Notifies the server to stop and finalize the stream.
+/// Notifies the signaling server to stop and finalize the stream.
+/// This ensures the recorded video file is properly closed and saved on the server.
 Future<void> stopStreamOnServer({
   required String url,
   required String id,
   required String token,
 }) async {
   try {
-    logger.debug('[Signaling] Sending DELETE to finalise stream: $url');
+    logger.debug('[Signaling] Sending DELETE to finalize stream session: $id');
 
     final response = await http
         .delete(Uri.parse(url), headers: {'X-Webitel-Access': token})
@@ -86,7 +96,7 @@ Future<void> stopStreamOnServer({
       throw Exception('Failed to stop stream on server');
     }
 
-    logger.info('[Signaling] Stream successfully stopped on server.');
+    logger.info('[Signaling] Stream $id successfully stopped on server.');
   } catch (e, st) {
     logger.error('[Signaling] Exception during stream stop', e, st);
     rethrow;
