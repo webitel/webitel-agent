@@ -165,7 +165,8 @@ class CallHandler {
     final hasActiveCalls = _activeCalls.isNotEmpty;
     final hasPostProcessing = _postProcessing.isNotEmpty;
 
-    final shouldBeActive = hasActiveCalls || hasPostProcessing;
+    final shouldBeActive =
+        hasActiveCalls || (hasActiveCalls && hasPostProcessing);
 
     if (shouldBeActive != _screenRecordingActive) {
       _screenRecordingActive = shouldBeActive;
