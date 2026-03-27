@@ -258,18 +258,35 @@ class WebitelSocket {
     }
   }
 
-  /// Callback triggered when CallHandler detects a state change that requires recording.
+  /// Handles recording state transitions coming from CallHandler.
+  ///
+  /// Guarantees:
+  /// - START only when we have a valid callId
+  /// - STOP always fires once when session fully ends
+  /// - No "fake" sessions like 'active_session'
   void _onRecordingStateChanged(bool active, String? callId) {
     if (active) {
-      final targetId = callId ?? 'active_session';
-      if (_screenshotService?.isControlEnabled ?? false) {
-        logger.info('[SOCKET] Triggering RECORD_START for $targetId');
-        onScreenRecordStart?.call({'root_id': targetId});
-      } else {
-        logger.warn('[SOCKET] Permission denied for recording');
+      // Do not start recording without a valid call context
+      if (callId == null) {
+        logger.warn(
+          '[SOCKET] RECORD_START skipped: missing callId (likely post-processing only)',
+        );
+        return;
       }
+
+      if (!(_screenshotService?.isControlEnabled ?? false)) {
+        logger.warn(
+          '[SOCKET] RECORD_START blocked: permission denied (callId=$callId)',
+        );
+        return;
+      }
+
+      logger.info('[SOCKET] RECORD_START | callId=$callId');
+
+      onScreenRecordStart?.call({'root_id': callId, 'source': 'call_event'});
     } else {
-      logger.info('[SOCKET] Triggering RECORD_STOP');
+      logger.info('[SOCKET] RECORD_STOP | reason=session_ended');
+
       onScreenRecordStop?.call({'reason': 'session_ended'});
     }
   }
