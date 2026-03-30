@@ -18,19 +18,16 @@ Future<({RTCSessionDescription answer, String streamId})> sendSDPToServer({
 
   final now = DateTime.now();
 
-  /// Standardized timestamp format: YYYYMMDD_HHMMSS
-  /// Matches the format used in ScreenshotSenderService exactly.
-  final String timestamp =
-      "${now.year}"
-      "${now.month.toString().padLeft(2, '0')}"
-      "${now.day.toString().padLeft(2, '0')}_"
-      "${now.hour.toString().padLeft(2, '0')}"
-      "${now.minute.toString().padLeft(2, '0')}"
-      "${now.second.toString().padLeft(2, '0')}";
+  // Helper to format date/time units with leading zeros
+  String fmt(int unit) => unit.toString().padLeft(2, '0');
 
-  // Final filename format: scr_ss_[agentId]_[timestamp].mp4
-  // Using 'scr_ss' prefix to match manual/auto screenshot naming convention.
-  final fileName = 'scr_vc_${agentId}_$timestamp.mp4';
+  // Format: YYYY-MM-DD_HH-mm-ss
+  final timestamp =
+      '${now.year}-${fmt(now.month)}-${fmt(now.day)}_'
+      '${fmt(now.hour)}-${fmt(now.minute)}-${fmt(now.second)}';
+
+  // Final filename format: recording_ss_${user_id}_year-month-day_hh-mm-ss
+  final fileName = 'recording_ss_${agentId}_$timestamp.mp4';
 
   final payload = {
     'type': offer.type,
