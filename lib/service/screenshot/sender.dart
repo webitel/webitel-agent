@@ -63,16 +63,17 @@ class ScreenshotSenderService {
   }
 
   /// Helper to generate a standardized filename for both manual and auto captures
-  /// Format: scr_ss_[agentId]_[YYYYMMDD_HHMMSS].png
+  /// Format: scr_ss_${agentId}_year-month-day_hh-mm-ss.png
   String _generateFilename(int agentId, DateTime time) {
-    final String timestamp =
-        "${time.year}"
-        "${time.month.toString().padLeft(2, '0')}"
-        "${time.day.toString().padLeft(2, '0')}_"
-        "${time.hour.toString().padLeft(2, '0')}"
-        "${time.minute.toString().padLeft(2, '0')}"
-        "${time.second.toString().padLeft(2, '0')}";
+    // Helper to format date/time units with leading zeros
+    String fmt(int unit) => unit.toString().padLeft(2, '0');
 
+    // Format: YYYY-MM-DD_HH-mm-ss
+    final String timestamp =
+        '${time.year}-${fmt(time.month)}-${fmt(time.day)}_'
+        '${fmt(time.hour)}-${fmt(time.minute)}-${fmt(time.second)}';
+
+    // Matches the required format exactly: scr_ss_ID_YYYY-MM-DD_HH-mm-ss
     return 'scr_ss_${agentId}_$timestamp.png';
   }
 
