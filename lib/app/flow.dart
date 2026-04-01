@@ -32,29 +32,30 @@ class AppFlow extends WindowListener {
 
   IStorageService get storage => _storage;
 
-  bool _isInitializing = false;
+  // [GUARD] Track listener registration to prevent duplicate event triggers after re-login
+  bool _isListenerRegistered = false;
 
   /// Entry point to start the application flow.
   Future<void> start() async {
     if (status.value == AppStatus.authenticating) return;
 
-    _isInitializing = true;
-
     status.value = AppStatus.authenticating;
     logger.info('[AppFlow] Starting application sequence...');
 
-    windowManager.addListener(this);
+    // [GUARD] Ensure window manager listener is attached only once per lifecycle
+    if (!_isListenerRegistered) {
+      windowManager.addListener(this);
+      _isListenerRegistered = true;
+      logger.info('[AppFlow] WindowManager listener registered.');
+    }
 
     final token = await _ensureToken();
     if (token == null) {
       status.value = AppStatus.idle;
-      _isInitializing = false;
       return;
     }
 
     await _initializeWithToken(token);
-
-    _isInitializing = false;
   }
 
   /// [PROTOCOL] Intercept close event to perform cleanup BEFORE exit
@@ -62,17 +63,18 @@ class AppFlow extends WindowListener {
   void onWindowClose() async {
     logger.warn('[AppFlow] Close requested. Suspending exit for cleanup...');
 
-    // [GUARD] Ensure we have time to finish async tasks like WebRTC stops or uploads
+    // [GUARD] Prevent immediate OS termination to allow async cleanup (WebRTC, Sockets, Uploads)
     await windowManager.setPreventClose(true);
 
     try {
-      // [LOGIC] Execute full cleanup (Stop WebRTC, Sockets, and File uploads)
+      // [LOGIC] Execute full cleanup sequence
       await shutdown();
       logger.info('[AppFlow] Cleanup successful. Terminating process.');
     } catch (e, st) {
       logger.error('[AppFlow] Cleanup failed during close', e, st);
     } finally {
-      // [FINAL] Fully close the application and kill the process
+      // [FINAL] Release the close lock and kill the process
+      await windowManager.setPreventClose(false);
       exit(0);
     }
   }
@@ -180,7 +182,8 @@ class AppFlow extends WindowListener {
   Future<void> shutdown() async {
     logger.info('[AppFlow] Performing graceful shutdown...');
 
-    windowManager.removeListener(this);
+    // [LOGIC] Keep the listener active for the next login session
+    // Only remove if we are genuinely destroying the singleton, otherwise it's redundant
 
     screenshotService?.stop();
     screenshotService = null;
