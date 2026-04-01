@@ -5,9 +5,9 @@ import 'package:webitel_desk_track/core/logger/logger.dart';
 /// Core principles:
 /// - Recording is STARTED only by a valid call event with `record_screen = true`.
 /// - Channel (`distribute`) events can EXTEND the session (post-processing),
-///   but must NEVER start a new recording session.
+///   but must NEVER start a new recording session if no call is present.
 /// - Recording remains active while:
-///     activeCalls.isNotEmpty OR postProcessing.isNotEmpty
+///   activeCalls.isNotEmpty OR postProcessing.isNotEmpty
 class CallHandler {
   final List<Map<String, dynamic>> _activeCalls = [];
   final List<Map<String, dynamic>> _postProcessing = [];
@@ -32,7 +32,7 @@ class CallHandler {
 
   /// Handles call-related WebSocket events.
   ///
-  /// This is the ONLY place where a recording session can START.
+  /// This is the PRIMARY place where a recording session can START.
   void handleCallEvent(
     Map<String, dynamic> data,
     void Function(bool active, String? callId) onUpdate,
@@ -61,10 +61,10 @@ class CallHandler {
       case 'ringing':
       case 'active':
       case 'update':
-        // Start session ONLY if:
-        // - recording is allowed
-        // - we have valid rootCallId
-        // - session is not already tracked
+        // [GUARD] Start session ONLY if:
+        // - recording is explicitly allowed by the platform
+        // - we have a valid rootCallId
+        // - session is not already being tracked
         if (shouldRecord &&
             rootCallId != null &&
             !_activeCalls.any((c) => c['callId'] == rootCallId)) {
@@ -82,9 +82,9 @@ class CallHandler {
 
       case 'hangup':
         if (rootCallId != null) {
-          logger.info('[CALL] Hangup | root=$rootCallId');
+          logger.info('[CALL] Hangup detected | root=$rootCallId');
 
-          // Remove both root and segment references
+          // Remove both root and segment references from active list
           _activeCalls.removeWhere(
             (c) => c['callId'] == rootCallId || c['segment_id'] == segmentId,
           );
@@ -100,9 +100,7 @@ class CallHandler {
 
   /// Handles channel (agent state) events.
   ///
-  /// IMPORTANT:
-  /// - These events NEVER start recording.
-  /// - They only extend or finish post-processing lifecycle.
+  /// These events manage the post-processing lifecycle (reporting/wrap-up).
   void handleChannelEvent(
     Map<String, dynamic> data,
     void Function(bool active, String? callId) onUpdate,
@@ -123,7 +121,7 @@ class CallHandler {
 
     final hasReporting = distribute['has_reporting'] == true;
 
-    // Add to post-processing (extends session AFTER call)
+    // [LOGIC] Add to post-processing queue to extend the session AFTER the call ends
     if (hasReporting) {
       final exists = _postProcessing.any((c) => c['attempt_id'] == attemptId);
 
@@ -133,11 +131,13 @@ class CallHandler {
           'timestamp': channel['timestamp'],
         });
 
-        logger.info('[CHANNEL] Post-processing started | attempt=$attemptId');
+        logger.info(
+          '[CHANNEL] Post-processing extension started | attempt=$attemptId',
+        );
       }
     }
 
-    // Remove post-processing when agent returns to idle states
+    // [LOGIC] Remove from post-processing when agent returns to idle/waiting states
     if (const ['missed', 'waiting', 'wrap_time'].contains(status)) {
       final existed = _postProcessing.any((c) => c['attempt_id'] == attemptId);
 
@@ -153,11 +153,7 @@ class CallHandler {
     _evaluateState(onUpdate, null);
   }
 
-  /// Evaluates global recording state.
-  ///
-  /// Rules:
-  /// - START happens ONLY via call events (handled earlier)
-  /// - This method ONLY toggles state based on current data
+  /// Evaluates global recording state based on calls and post-processing.
   void _evaluateState(
     void Function(bool active, String? callId) onUpdate,
     String? callId,
@@ -165,14 +161,25 @@ class CallHandler {
     final hasActiveCalls = _activeCalls.isNotEmpty;
     final hasPostProcessing = _postProcessing.isNotEmpty;
 
-    final shouldBeActive =
-        hasActiveCalls || (hasActiveCalls && hasPostProcessing);
+    // [CRITICAL FIX] Session is active if there is a call OR post-processing.
+    // This prevents 'hangup' from killing the recording while agent is still reporting.
+    final shouldBeActive = hasActiveCalls || hasPostProcessing;
 
     if (shouldBeActive != _screenRecordingActive) {
+      // [GUARD] Prevention of "Ghost Starts":
+      // Do not transition from FALSE to TRUE if there are NO active calls.
+      // This ensures post-processing events alone cannot trigger a new recording.
+      if (shouldBeActive && !hasActiveCalls && !_screenRecordingActive) {
+        logger.warn(
+          '[STATE] Blocked recording start: post-processing exists but no active call',
+        );
+        return;
+      }
+
       _screenRecordingActive = shouldBeActive;
 
       logger.info(
-        '[STATE] active=$_screenRecordingActive '
+        '[STATE] Recording state changed: active=$_screenRecordingActive '
         '(calls=${_activeCalls.length}, post=${_postProcessing.length})',
       );
 
