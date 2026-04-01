@@ -17,11 +17,13 @@ class CallHandler {
 
   bool _isValidUuid(String? uuid) {
     if (uuid == null) return false;
+
     return RegExp(
       r'^[0-9a-fA-F]{8}-'
       r'[0-9a-fA-F]{4}-'
       r'[0-9a-fA-F]{4}-'
-      r'[0-9a-fA-F]{12}$', // Fixed regex for standard UUID
+      r'[0-9a-fA-F]{4}-'
+      r'[0-9a-fA-F]{12}$',
     ).hasMatch(uuid);
   }
 
