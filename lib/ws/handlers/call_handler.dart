@@ -51,6 +51,10 @@ class CallHandler {
         call['data']?['queue']?['reporting'] == true ||
         call['data']?['queue']?['reporting'] == 'true';
 
+    final shouldRecord =
+        call['data']?['record_screen'] == true ||
+        call['variables']?['record_screen'] == 'true';
+
     final rootCallId = _isValidUuid(parentId) ? parentId : segmentId;
 
     logger.debug(
@@ -61,7 +65,7 @@ class CallHandler {
       case 'ringing':
       case 'active':
       case 'update':
-        if (rootCallId != null) {
+        if (shouldRecord && rootCallId != null) {
           if (!_activeCalls.any((c) => c['callId'] == rootCallId)) {
             logger.info('[CALL] Start tracking | root=$rootCallId');
             _activeCalls.add({
