@@ -98,21 +98,6 @@ class CallHandler {
   // ============================================================================
 
   /// Processes incoming call events and updates recording state accordingly.
-  ///
-  /// Supported event types:
-  ///   ringing / active / update → start or continue tracking the call
-  ///   hangup                    → remove call from active tracking
-  ///   (anything else)           → ignored, state re-evaluated
-  ///
-  /// Root ID resolution (see also [_segmentToRoot]):
-  ///   1. Extract segmentId from call.id
-  ///   2. Extract parentId from call.parent_id (or call.data.parent_id)
-  ///   3. rootCallId = parentId if valid UUID, else segmentId
-  ///   4. On ringing/active/update: store segmentId→rootCallId in [_segmentToRoot]
-  ///   5. On hangup: resolve root via [_segmentToRoot][segmentId] fallback
-  ///
-  /// [data]     Raw WebSocket event payload.
-  /// [onUpdate] Called when recording state transitions: onUpdate(isActive, callId).
   void handleCallEvent(
     Map<String, dynamic> data,
     void Function(bool active, String? callId) onUpdate,
@@ -151,8 +136,7 @@ class CallHandler {
     final parentIdValid = _isValidUuid(parentIdRaw) ? parentIdRaw : null;
 
     // Root call ID: prefer the validated parent (original channel that the
-    // agent leg was attached to). Fall back to segmentId when no parent exists
-    // (e.g. a direct call with no queue).
+    // agent leg was attached to). Fall back to segmentId when no parent exists.
     final rootCallId = parentIdValid ?? segmentId;
 
     // -------------------------------------------------------------------------
@@ -200,8 +184,6 @@ class CallHandler {
       case 'active':
       case 'update':
         if (segmentId != null && rootCallId != null) {
-          // Always maintain the segment→root map so hangup can resolve correctly
-          // even when parent_id is absent from the hangup payload.
           final previousRoot = _segmentToRoot[segmentId];
           if (previousRoot != rootCallId) {
             _segmentToRoot[segmentId] = rootCallId;
@@ -235,8 +217,6 @@ class CallHandler {
             );
           }
 
-          // Pre-register post-processing so that if the channel "processing"
-          // event arrives after hangup, we still hold recording.
           if (hasReporting && attemptId != null) {
             final alreadyRegistered = _postProcessing.any(
               (p) => p['attempt_id'] == attemptId,
@@ -266,10 +246,7 @@ class CallHandler {
       // Call ended
       // -----------------------------------------------------------------------
       case 'hangup':
-        // Resolve root from segment map first.
-        // The hangup payload frequently omits parent_id, so rootCallId derived
-        // directly from the payload would equal segmentId — which never matches
-        // what was stored under parentId during ringing.
+        // FIX: Use segment map but also handle direct matches.
         final resolvedRoot = _segmentToRoot[segmentId] ?? rootCallId;
 
         logger.info(
@@ -281,9 +258,15 @@ class CallHandler {
           '  activeCalls before=${_activeCalls.map((c) => c["callId"]).toList()}',
         );
 
-        if (resolvedRoot != null) {
+        if (resolvedRoot != null || segmentId != null) {
           final before = _activeCalls.length;
-          _activeCalls.removeWhere((c) => c['callId'] == resolvedRoot);
+
+          // FIX: Remove call using both root ID and segment ID as a fallback
+          // because hangup often arrives with only segmentId.
+          _activeCalls.removeWhere(
+            (c) => c['callId'] == resolvedRoot || c['segment_id'] == segmentId,
+          );
+
           final removed = before - _activeCalls.length;
 
           if (removed > 0) {
@@ -294,14 +277,11 @@ class CallHandler {
           } else {
             logger.warn(
               '[CALL_EVENT] ✘ Hangup for root=$resolvedRoot but not found in activeCalls\n'
-              '  activeCalls=${_activeCalls.map((c) => c["callId"]).toList()}\n'
-              '  This may indicate a missed ringing event or a direct call '
-              'without record_screen=true — no action needed.',
+              '  activeCalls=${_activeCalls.map((c) => c["callId"]).toList()}',
             );
           }
         }
 
-        // Clean up the segment→root mapping to avoid unbounded growth.
         if (segmentId != null) {
           _segmentToRoot.remove(segmentId);
           logger.debug(
@@ -324,20 +304,6 @@ class CallHandler {
   // ============================================================================
 
   /// Processes agent channel status changes that relate to post-call work.
-  ///
-  /// Lifecycle:
-  ///   distribute / offering → pre-registration was done by handleCallEvent
-  ///   processing            → confirm active post-processing (remove pre-reg flag)
-  ///   missed / waiting /
-  ///   wrap_time             → post-processing complete, remove from list
-  ///
-  /// Note on "late arrival" scenario:
-  ///   If the channel "processing" event arrives *before* the corresponding
-  ///   call event (race condition on reconnect), we still register the session
-  ///   so recording starts correctly when the call event arrives.
-  ///
-  /// [data]     Raw WebSocket event payload.
-  /// [onUpdate] Called when recording state transitions.
   void handleChannelEvent(
     Map<String, dynamic> data,
     void Function(bool active, String? callId) onUpdate,
@@ -379,23 +345,17 @@ class CallHandler {
       );
 
       if (index != -1) {
-        final wasPreRegistered = _postProcessing[index]['is_pre_registered'];
         _postProcessing[index]['is_pre_registered'] = false;
         logger.info(
-          '[CHANNEL_EVENT] ✔ Post-processing confirmed\n'
-          '  attempt=$attemptId | was_pre_registered=$wasPreRegistered\n'
-          '  postProcessing.length=${_postProcessing.length}',
+          '[CHANNEL_EVENT] ✔ Post-processing confirmed | attempt=$attemptId',
         );
       } else {
-        // Processing event arrived before the call event (reconnect race).
         _postProcessing.add({
           'attempt_id': attemptId,
           'is_pre_registered': false,
         });
         logger.info(
-          '[CHANNEL_EVENT] ⚡ Late post-processing registration (channel arrived before call)\n'
-          '  attempt=$attemptId\n'
-          '  postProcessing.length=${_postProcessing.length}',
+          '[CHANNEL_EVENT] ⚡ Late post-processing registration | attempt=$attemptId',
         );
       }
     }
@@ -404,22 +364,22 @@ class CallHandler {
     // Transition: active processing → finished
     // -------------------------------------------------------------------------
     if (const {'missed', 'waiting', 'wrap_time'}.contains(status)) {
-      final before = _postProcessing.length;
+      final beforePost = _postProcessing.length;
       _postProcessing.removeWhere((p) => p['attempt_id'] == attemptId);
-      final removed = before - _postProcessing.length;
+      final removedPost = beforePost - _postProcessing.length;
 
-      if (removed > 0) {
+      // FIX: If agent returns to 'waiting', force clear any active call
+      // associated with this attemptId. This handles cases where 'hangup'
+      // failed to clean up activeCalls due to ID mismatch.
+      final beforeActive = _activeCalls.length;
+      _activeCalls.removeWhere((c) => c['attempt_id'] == attemptId);
+      final removedActive = beforeActive - _activeCalls.length;
+
+      if (removedPost > 0 || removedActive > 0) {
         logger.info(
-          '[CHANNEL_EVENT] ✔ Post-processing finished\n'
-          '  attempt=$attemptId | status=$status\n'
-          '  postProcessing.length=${_postProcessing.length}\n'
+          '[CHANNEL_EVENT] ✔ Cleanup finished for attempt=$attemptId\n'
+          '  status=$status | removedPost=$removedPost | removedActive=$removedActive\n'
           '  activeCalls.length=${_activeCalls.length}',
-        );
-      } else {
-        logger.debug(
-          '[CHANNEL_EVENT] End status received but attempt not tracked\n'
-          '  attempt=$attemptId | status=$status\n'
-          '  (Normal if call had no reporting or was already cleaned up)',
         );
       }
     }
@@ -431,17 +391,6 @@ class CallHandler {
   // State Evaluation
   // ============================================================================
 
-  /// Computes desired recording state and fires [onUpdate] on transitions.
-  ///
-  /// Logic:
-  ///   shouldBeActive = activeCalls.isNotEmpty OR postProcessing.isNotEmpty
-  ///
-  /// Only fires callback when the state actually changes to avoid
-  /// redundant start/stop calls to the recording system.
-  ///
-  /// [onUpdate] Callback signature: onUpdate(isActive, callId)
-  ///   isActive = new recording state
-  ///   callId   = root call ID when transitioning to active, else null
   void _evaluateState(
     void Function(bool active, String? callId) onUpdate,
     String? callId,
@@ -451,8 +400,7 @@ class CallHandler {
 
     if (shouldBeActive == _screenRecordingActive) {
       logger.debug(
-        '[STATE_EVAL] No transition | '
-        'recording=$_screenRecordingActive (unchanged)\n'
+        '[STATE_EVAL] No transition | recording=$_screenRecordingActive (unchanged)\n'
         '  activeCalls=${_activeCalls.map((c) => c["callId"]).toList()}\n'
         '  postProcessing=${_postProcessing.map((p) => p["attempt_id"]).toList()}',
       );
@@ -464,11 +412,8 @@ class CallHandler {
     logger.info(
       '[STATE_EVAL] ◉ Recording state CHANGED → active=$_screenRecordingActive\n'
       '  callId        = $callId\n'
-      '  activeCalls   = ${_activeCalls.length} '
-      '(${_activeCalls.map((c) => c["callId"]).toList()})\n'
-      '  postProcessing= ${_postProcessing.length} '
-      '(${_postProcessing.map((p) => p["attempt_id"]).toList()})\n'
-      '  segmentMap    = ${_segmentToRoot.length} entries',
+      '  activeCalls   = ${_activeCalls.length}\n'
+      '  postProcessing= ${_postProcessing.length}',
     );
 
     onUpdate(_screenRecordingActive, _screenRecordingActive ? callId : null);
@@ -478,27 +423,12 @@ class CallHandler {
   // Cleanup
   // ============================================================================
 
-  /// Clears all state.
-  ///
-  /// Called on:
-  ///   - WebSocket disconnect (force-stop recording)
-  ///   - App shutdown
-  ///   - Watchdog out-of-sync detection
   void clear() {
-    final callCount = _activeCalls.length;
-    final postCount = _postProcessing.length;
-    final mapCount = _segmentToRoot.length;
-
     _activeCalls.clear();
     _postProcessing.clear();
     _segmentToRoot.clear();
     _screenRecordingActive = false;
 
-    logger.info(
-      '[CALL_HANDLER] ✘ All state cleared\n'
-      '  removed activeCalls=$callCount | '
-      'postProcessing=$postCount | '
-      'segmentMap=$mapCount',
-    );
+    logger.info('[CALL_HANDLER] ✘ All state cleared');
   }
 }
