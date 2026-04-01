@@ -56,6 +56,7 @@ class WebitelSocket {
     _notificationHandler = NotificationHandler(
       screenshotService: null,
       requestExecutor: request,
+      callHandler: _callHandler,
     );
     _setupConnectivity();
   }
@@ -87,6 +88,7 @@ class WebitelSocket {
     _notificationHandler = NotificationHandler(
       screenshotService: screenshot,
       requestExecutor: request,
+      callHandler: _callHandler,
     );
     _notificationHandler.onScreenRecordStart =
         (body) => onScreenRecordStart?.call(body);
