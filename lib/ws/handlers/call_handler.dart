@@ -8,9 +8,6 @@ class CallHandler {
 
   bool _screenRecordingActive = false;
 
-  /// Internal flag to track if a stop-delay timer is currently running
-  bool _isStopPending = false;
-
   List<Map<String, dynamic>> get activeCalls => _activeCalls;
   List<Map<String, dynamic>> get postProcessing => _postProcessing;
   bool get screenRecordingActive => _screenRecordingActive;
@@ -140,7 +137,7 @@ class CallHandler {
       }
     }
 
-    if (const ['missed', 'waiting', 'wrap_time', 'idle'].contains(status)) {
+    if (const ['missed', 'waiting', 'wrap_time'].contains(status)) {
       final bool existed = _postProcessing.any(
         (p) => p['attempt_id'] == attemptId,
       );
@@ -156,52 +153,22 @@ class CallHandler {
   }
 
   /// Evaluates whether the screen recorder should be running.
-  /// [FIX] Added a 2-second delay before stopping the recorder.
   void _evaluateState(
     void Function(bool active, String? callId) onUpdate,
     String? callId,
   ) {
-    final hasActiveCalls = _activeCalls.isNotEmpty;
-    final hasPostProcessing = _postProcessing.isNotEmpty;
-    final shouldBeActive = hasActiveCalls || hasPostProcessing;
+    final shouldBeActive =
+        _activeCalls.isNotEmpty || _postProcessing.isNotEmpty;
 
-    // [CASE] New activity detected (call or processing start)
-    if (shouldBeActive && !_screenRecordingActive) {
-      // [GUARD] Reset pending stop if a new call arrives during the delay
-      _isStopPending = false;
+    if (shouldBeActive != _screenRecordingActive) {
+      _screenRecordingActive = shouldBeActive;
 
-      _screenRecordingActive = true;
       logger.info(
-        '[STATE] Recording state changed: active=true '
+        '[STATE] Recording state changed: active=$_screenRecordingActive '
         '(calls=${_activeCalls.length}, post=${_postProcessing.length})',
       );
-      onUpdate(true, callId);
-      return;
-    }
 
-    // [CASE] Activity ended (calls and processing finished)
-    if (!shouldBeActive && _screenRecordingActive && !_isStopPending) {
-      _isStopPending = true;
-      logger.info('[STATE] Post-processing finished. Delaying stop by 2s...');
-
-      Future.delayed(const Duration(seconds: 2), () {
-        // [GUARD] Check if we still should stop after the delay
-        final stillShouldStop = _activeCalls.isEmpty && _postProcessing.isEmpty;
-
-        if (stillShouldStop && _isStopPending) {
-          _screenRecordingActive = false;
-          _isStopPending = false;
-          logger.info(
-            '[STATE] Recording state changed: active=false (delay finished)',
-          );
-          onUpdate(false, callId);
-        } else {
-          logger.info(
-            '[STATE] Recording stop cancelled: New activity detected during delay',
-          );
-          _isStopPending = false;
-        }
-      });
+      onUpdate(_screenRecordingActive, callId);
     }
   }
 
@@ -209,7 +176,6 @@ class CallHandler {
     _activeCalls.clear();
     _postProcessing.clear();
     _screenRecordingActive = false;
-    _isStopPending = false;
     logger.debug('[CallHandler] State cleared');
   }
 }
