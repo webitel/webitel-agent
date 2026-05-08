@@ -1,61 +1,72 @@
 import 'package:flutter/material.dart';
-import 'package:webitel_desk_track/service/ffmpeg_manager/ffmpeg_manager.dart';
-import 'package:window_manager/window_manager.dart';
-import 'package:webitel_desk_track/config/config.dart';
-import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/app/flow.dart';
+import 'package:webitel_desk_track/config/service.dart';
+import 'package:webitel_desk_track/core/logger/logger.dart';
 import 'package:webitel_desk_track/presentation/page/main.dart';
 import 'package:webitel_desk_track/presentation/page/missing_config.dart';
-import 'package:webitel_desk_track/app/flow.dart';
-import 'package:webitel_desk_track/service/system/tray.dart';
-import 'package:webitel_desk_track/app/window_listener.dart';
+import 'package:webitel_desk_track/service/ffmpeg/manager/manager.dart';
+import 'package:webitel_desk_track/service/tray/tray.dart';
+import 'package:window_manager/window_manager.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 class AppInitializer {
   static Future<void> run() async {
-    // --- Window Setup ---
-    await windowManager.ensureInitialized();
-    await windowManager.setPreventClose(true);
-    windowManager.addListener(MyWindowListener());
+    logger.info('[AppInitializer] Bootstrap sequence started');
 
-    // --- Try to load config ---
+    // 1. Window Configuration
+    // [GUARD] Ensure window is initialized before any UI logic
+    await windowManager.ensureInitialized();
+
+    // [LOGIC] Set the flag that prevents the app from closing on 'X'
+    await windowManager.setPreventClose(true);
+
+    // 2. Load Config & Init Logger
     final config = await AppConfig.load();
     await logger.init(config);
 
-    // --- Initialize system tray ---
-    await TrayService.instance.initTray();
+    // 3. System Tray Initialization
+    // [LOGIC] Pass storage directly for consistent auth handling
+    await TrayService.init(AppFlow.instance.storage);
 
     if (config != null) {
+      // 4. Heavy services setup (FFmpeg)
       FFmpegManager.instance.init();
-      // Config exists → start main app
+
       runApp(const AppRoot());
+
+      // [LOGIC] Start the main application flow after the first frame is rendered
       WidgetsBinding.instance.addPostFrameCallback((_) async {
-        await AppFlow.start();
+        await AppFlow.instance.start();
       });
     } else {
-      // Config missing → show placeholder app
+      // 5. Fallback if config is missing (fresh install)
       runApp(const MissingConfigRoot());
 
-      // When config uploaded via tray → restart cleanly
       TrayService.instance.onConfigUploaded = () async {
         final uploaded = await AppConfig.load();
         if (uploaded != null) {
           await logger.init(uploaded);
           _restartApp();
         } else {
-          logger.error('AppInitializer: config upload failed to load');
+          logger.error(
+            '[AppInitializer] Config upload detected but failed to load',
+          );
         }
       };
     }
   }
 
-  /// Clean restart of the app (without Phoenix)
+  /// Gracefully shuts down existing instances before re-running flow.
   static Future<void> _restartApp() async {
     logger.warn('[AppInitializer] Restarting application...');
-    await AppFlow.shutdown();
+
+    await AppFlow.instance.shutdown();
+
     runApp(const AppRoot());
+
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await AppFlow.start();
+      await AppFlow.instance.start();
     });
   }
 }
@@ -65,8 +76,9 @@ class AuthGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // [LOGIC] Listen to the centralized status provided by AppFlow singleton
     return ValueListenableBuilder<AppStatus>(
-      valueListenable: AppFlow.status,
+      valueListenable: AppFlow.instance.status,
       builder: (context, status, child) {
         switch (status) {
           case AppStatus.ready:
@@ -77,9 +89,19 @@ class AuthGate extends StatelessWidget {
             );
           case AppStatus.failure:
             return const Scaffold(
-              body: Center(child: Text("Authentication Failed")),
+              body: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.error_outline, color: Colors.red, size: 48),
+                    SizedBox(height: 16),
+                    Text("Authentication Failed"),
+                  ],
+                ),
+              ),
             );
           case AppStatus.idle:
+          default:
             return const Scaffold(body: SizedBox.shrink());
         }
       },
@@ -87,7 +109,6 @@ class AuthGate extends StatelessWidget {
   }
 }
 
-/// Root app when config is valid
 class AppRoot extends StatelessWidget {
   const AppRoot({super.key});
 
@@ -96,12 +117,12 @@ class AppRoot extends StatelessWidget {
     return MaterialApp(
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
+      theme: ThemeData(useMaterial3: true),
       home: const AuthGate(),
     );
   }
 }
 
-/// Root app when config is missing
 class MissingConfigRoot extends StatelessWidget {
   const MissingConfigRoot({super.key});
 

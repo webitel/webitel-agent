@@ -1,21 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:webitel_desk_track/core/logger.dart';
+import 'package:webitel_desk_track/core/logger/logger.dart';
+import 'package:webitel_desk_track/core/storage/interface.dart';
 import 'package:webitel_desk_track/presentation/theme/defaults.dart';
 import 'package:webitel_desk_track/presentation/theme/text_style.dart';
-import 'package:webitel_desk_track/storage/storage.dart';
 
 class LoginWebView extends StatefulWidget {
   final String url;
+  final IStorageService storage;
 
-  const LoginWebView({super.key, required this.url});
+  const LoginWebView({super.key, required this.url, required this.storage});
 
   @override
   State<LoginWebView> createState() => _LoginWebViewState();
 }
 
 class _LoginWebViewState extends State<LoginWebView> {
-  final _storage = SecureStorageService();
   InAppWebViewController? _controller;
 
   bool _loading = true;
@@ -146,7 +146,7 @@ class _LoginWebViewState extends State<LoginWebView> {
       logger.debug('Found token: $token');
 
       try {
-        await _storage.writeAccessToken(token);
+        await widget.storage.writeAccessToken(token);
         logger.info('Token saved successfully.');
 
         if (mounted) {

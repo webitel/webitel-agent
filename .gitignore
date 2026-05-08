@@ -46,3 +46,6 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 build_sign_dmg.md
+build_macos.sh
+msi.bat
+scripts/msix.bat

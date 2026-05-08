@@ -1,11 +1,9 @@
 import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:webitel_desk_track/app/flow.dart';
-import 'package:webitel_desk_track/core/logger.dart';
-
-import 'package:webitel_desk_track/ws/ws.dart';
+import 'package:webitel_desk_track/core/logger/logger.dart';
+import 'package:webitel_desk_track/ws/webitel_socket.dart';
 
 import '../../gen/assets.gen.dart';
 import '../theme/text_style.dart';
@@ -19,11 +17,12 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   WebitelSocket? _socket;
-
   late final AppLifecycleListener _listener;
 
   @override
   void initState() {
+    super.initState();
+    // Initialize lifecycle listener to handle app exits and backgrounding
     _listener = AppLifecycleListener(
       onExitRequested: () => _handleAppExit(),
       onDetach: _handleAppExit,
@@ -31,7 +30,6 @@ class _MainPageState extends State<MainPage> {
       onResume: () => _connectSocket(),
       onRestart: () => _connectSocket(),
     );
-    super.initState();
   }
 
   @override
@@ -40,30 +38,33 @@ class _MainPageState extends State<MainPage> {
     super.dispose();
   }
 
+  /// Handles graceful cleanup when the user tries to close the application
   Future<AppExitResponse> _handleAppExit() async {
-    logger.info('[MainPage] App exit requested — stopping recorders...');
+    logger.info('[MainPage] App exit requested — performing cleanup...');
 
     try {
-      await AppFlow.shutdown();
+      // FIX: Accessing shutdown via the singleton instance
+      await AppFlow.instance.shutdown();
+
       await _socket?.disconnect();
       logger.info('[MainPage] Cleanup complete, allowing exit');
 
       return AppExitResponse.exit;
     } catch (e, st) {
       logger.error('[MainPage] Error during app exit cleanup:', e, st);
-
       return AppExitResponse.exit;
     }
   }
 
+  /// Restores socket connection when the app returns to the foreground
   Future<void> _connectSocket() async {
     try {
       await _socket?.connect();
       await _socket?.authenticate();
       await _socket?.ready;
-      logger.info('[MainPage] Socket connected and authenticated');
+      logger.info('[MainPage] Socket connection restored');
     } catch (e, st) {
-      logger.error('[MainPage] Socket connect/auth error:', e, st);
+      logger.error('[MainPage] Socket reconnection error:', e, st);
     }
   }
 
