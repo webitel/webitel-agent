@@ -1,46 +1,72 @@
-# 🖥 Webitel-Agent
+# Webitel DeskTrack
 
-Cross-platform desktop application (Windows/macOS/Linux) for Webitel call center integration.
+A cross-platform desktop application for Webitel call-center agents. It monitors agent activity by streaming the screen to supervisors in real time, capturing periodic screenshots, and recording screen sessions triggered by call-center events.
 
------
+**Primary platform:** Windows. macOS and Linux builds are supported but secondary.
 
-## 🚀 Key Features
+---
+
+## Features
 
 | Feature | Description |
-|:---|:---|
-| **🖼️ Periodic Screenshots** | Automatic screen captures |
-| **🎥 Screen Recording** | Starts recording based on Webitel socket events |
-| **📡 Live Screen Streaming** | Real-time agent screen sharing via WebRTC for supervisors |
-| **🧠 Configurable Behavior** | Controlled through the `config.json` file |
-| **🪵 Logging** | File-based logging of activities and errors (when enabled) |
-| **🖱 Tray Menu** | Manual configuration upload via the "Upload configuration" option |
+| --- | --- |
+| **Periodic Screenshots** | Automatic screen captures sent to the Webitel server on a configurable interval |
+| **Screen Recording** | Records the agent's screen in response to WebSocket events from the Webitel server |
+| **Live Screen Streaming** | Real-time screen share to supervisors via WebRTC (offer/answer signaling over WebSocket) |
+| **Audio Capture** | Captures system audio (Stereo Mix) and microphone via FFmpeg DirectShow on Windows |
+| **OpenTelemetry** | Structured log export to an OTel collector (logs, traces) |
+| **WebRTC Metrics** | Periodic performance logging: FPS, bitrate, RTT, packet loss, ICE state |
+| **Tray Menu** | Manual configuration upload without restarting the application |
 
------
+---
 
-## 📁 Configuration
+## Architecture
 
-Place a **`config.json`** file in the application support directory:
+```text
+WebSocket (lib/ws/)
+  └── NotificationHandler
+        ├── ScreenStreamer      — real-time WebRTC screen share to supervisor
+        ├── RecordingManager
+        │     ├── WebRTC Recorder  — records via flutter_webrtc
+        │     └── FFmpeg Recorder  — records via bundled FFmpeg binary
+        │           └── Capturer   — enumerates DirectShow devices, probes and opens audio
+        └── ScreenshotService  — periodic and on-demand screenshots
+```
 
-### 🔧 Platform Paths
+Key source paths:
 
-  * **Windows**: `C:\Users\<username>\AppData\Roaming\Webitel-Agent`
-  * **macOS**: `/Users/<username>/Library/Application Support/Webitel-Agent`
-  * **Linux**: `/home/<username>/.config/Webitel-Agent`
+| Layer | Path |
+| --- | --- |
+| WebSocket core | `lib/ws/` |
+| Notification routing | `lib/ws/handlers/notification_handler.dart` |
+| Screen streaming (WebRTC) | `lib/service/webrtc/streamer/streamer.dart` |
+| WebRTC recording | `lib/service/webrtc/recorder/recorder.dart` |
+| Audio + screen capture | `lib/service/webrtc/common/webrtc/capturer.dart` |
+| FFmpeg binary lifecycle | `lib/service/ffmpeg/manager/manager.dart` |
+| Local file recording | `lib/service/ffmpeg/recorder/` |
+| Screenshots | `lib/service/screenshot/` |
+| App config | `lib/config/` |
 
-💡 **Retrieve path programmatically**:
-Use: `final appSupportDir = await getApplicationSupportDirectory();`
+---
 
-⚠️ **Missing Config File?**
-Use the **"Upload configuration"** option in the tray menu to manually load your configuration.
+## Configuration
 
------
+On first launch, place a `config.json` file in the OS application-support directory:
 
-## 🧾 Example `config.json` (Updated)
+| Platform | Path |
+| --- | --- |
+| Windows | `%APPDATA%\Webitel-Agent\config.json` |
+| macOS | `~/Library/Application Support/Webitel-Agent/config.json` |
+| Linux | `~/.config/Webitel-Agent/config.json` |
+
+Alternatively, use the **Upload configuration** option in the system tray menu to load the file manually.
+
+### Example `config.json`
 
 ```json
 {
   "server": {
-    "baseUrl": "[https://test-host.webitel.com](https://test-host.webitel.com)"
+    "baseUrl": "https://your-host.webitel.com"
   },
   "telemetry": {
     "level": "debug",
@@ -51,8 +77,8 @@ Use the **"Upload configuration"** option in the tray menu to manually load your
     },
     "opentelemetry": {
       "enabled": true,
-      "endpoint": "[http://192.168.1.10:4317](http://192.168.1.10:4317)",
-      "serviceName": "webitel-desk-track-test",
+      "endpoint": "http://192.168.1.10:4317",
+      "serviceName": "webitel-desk-track",
       "exportLogs": true
     }
   },
@@ -66,53 +92,102 @@ Use the **"Upload configuration"** option in the tray menu to manually load your
     "height": 1080,
     "saveLocally": false,
     "maxCallRecordDuration": 600
+  },
+  "devices": {
+    "stereoMixKeywords": ["Stereo Mix"],
+    "microphoneKeywords": ["Microphone"]
   }
 }
-````
-
------
-
-## 🧩 Configuration Reference (Updated)
-
-| Key | Description |
-|:---|:---|
-| **`server.baseUrl`** | Base URL of the Webitel server (e.g., `https://test-host.webitel.com`) |
-| **`telemetry.level`** | Minimum logging level (**`info`**, **`debug`**, **`error`**) |
-| **`telemetry.console`** | Enable logging output to the console |
-| **`telemetry.file.enabled`** | Enable writing logs to a file |
-| **`telemetry.file.path`** | Path to the log file (relative or absolute) |
-| **`telemetry.opentelemetry.enabled`** | Enable exporting metrics/traces/logs via OpenTelemetry |
-| **`telemetry.opentelemetry.endpoint`**| HTTP/gRPC address of the OpenTelemetry collector (e.g., `http://192.168.1.10:4317`) |
-| **`telemetry.opentelemetry.serviceName`** | Service name for OpenTelemetry (e.g., `webitel-desk-track-test`) |
-| **`telemetry.opentelemetry.exportLogs`** | Export logs via OpenTelemetry |
-| **`webrtc.iceServers`** | List of STUN/TURN servers for WebRTC sessions |
-| **`webrtc.iceTransportPolicy`**| ICE transport policy (**`all`** or **`relay`**) |
-| **`webrtc.enableMetrics`** | **NEW:** If `true`, enables periodic WebRTC performance logging (CPU, bitrate, RTT, packet loss). Requires `telemetry.level` set to **`debug`** or lower. |
-| **`video.width`** | Width of the captured video/screenshot in pixels |
-| **`video.height`** | Height of the captured video/screenshot in pixels |
-| **`video.saveLocally`** | Save captured video locally |
-| **`video.maxCallRecordDuration`** | Maximum call recording duration in seconds (e.g., **`600`** sec) |
-
------
-
-## ⚙️ WebRTC Metrics Logging
-
-When `webrtc.enableMetrics` is set to `true` and the log level is `debug`, the application periodically logs the performance and health of the active WebRTC stream (Screen Streaming).
-
-### 📖 Example Log Breakdown
-
-```
-[Metrics] FPS=12.0 res=3600x2338 frames(S/E)=3/3 encT(total)=88.0ms encT(avg)=29.3ms/frame key=1 ↑pkts=189 ↑bytes=202983 ↓bytes=1375 targetBitrate=2083k ACTUAL_BITRATE=1579kbps nack=0 pli=0 fir=0 RTT=0.0ms ICE=succeeded writable=true nominated=true
 ```
 
-| Metric | What it Measures | Interpretation |
-|:---|:---|:---|
-| **`FPS=12.0`** | **Frames Per Second** | The actual frequency of frames being sent over the network. |
-| **`res=3600x2338`** | **Resolution** | The pixel dimensions of the captured screen. (High values require more resources). |
-| **`frames(S/E)=3/3`**| **Sent/Encoded** | Number of frames *sent* vs. *encoded* in the last second. Should be equal (`S=E`) for a healthy stream. |
-| **`encT(avg)=29.3ms/frame`** | **Average Encode Time** | Average time the local CPU took to compress one frame. **Indicates CPU Load.** Lower is better. |
-| **`ACTUAL_BITRATE=1579kbps`** | **Actual Outgoing Bitrate** | The actual data rate used by the stream in the last second. |
-| **`targetBitrate=2083k`** | **Target Bitrate** | The desired data rate requested by the encoder. |
-| **`nack/pli/fir=0/0/0`** | **Error Recovery** | Counters for requests to re-send lost packets (`nack`) or full frames (`pli`/`fir`). **Zero is ideal**, indicating no packet loss or severe decoding issues. |
-| **`RTT=0.0ms`** | **Round Trip Time** | Network latency (ping time). A value of `0.0ms` often means the metric was not properly calculated in this specific report or it's a very low-latency local connection. |
-| **`ICE=succeeded`** | **ICE State** | Confirms that the connection (path discovery) was successfully established. |
+### Configuration Reference
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `server.baseUrl` | string | Base URL of the Webitel server |
+| `telemetry.level` | string | Minimum log level: `debug`, `info`, `error` |
+| `telemetry.console` | bool | Print logs to stdout |
+| `telemetry.file.enabled` | bool | Write logs to a file |
+| `telemetry.file.path` | string | Log file path (relative or absolute) |
+| `telemetry.opentelemetry.enabled` | bool | Enable OTel export |
+| `telemetry.opentelemetry.endpoint` | string | OTel collector address (HTTP/gRPC) |
+| `telemetry.opentelemetry.serviceName` | string | Service name reported to the collector |
+| `telemetry.opentelemetry.exportLogs` | bool | Include logs in OTel export |
+| `webrtc.iceServers` | array | STUN/TURN server list for WebRTC |
+| `webrtc.iceTransportPolicy` | string | `all` or `relay` |
+| `webrtc.enableMetrics` | bool | Log WebRTC performance metrics periodically (requires `level: debug`) |
+| `video.width` | int | Capture width in pixels |
+| `video.height` | int | Capture height in pixels |
+| `video.saveLocally` | bool | Save recorded video to disk |
+| `video.maxCallRecordDuration` | int | Maximum recording duration in seconds |
+| `devices.stereoMixKeywords` | array | Keywords used to identify the Stereo Mix device |
+| `devices.microphoneKeywords` | array | Keywords used to identify the microphone device |
+
+---
+
+## Audio Capture (Windows)
+
+Audio is captured by FFmpeg using DirectShow (`-f dshow`). The app enumerates devices via `ffmpeg -list_devices true -f dshow -i dummy` and matches them by keyword against `stereoMixKeywords` and `microphoneKeywords`.
+
+Before starting a recording session, each matched device is probed with a short 0.1 s test recording. If Stereo Mix is disabled in Windows Sound settings it will appear in the device list but fail the probe — the app falls back to microphone-only audio and proceeds rather than failing.
+
+---
+
+## WebRTC Metrics
+
+When `webrtc.enableMetrics: true` and `telemetry.level: debug`, the app logs a periodic performance snapshot for the active stream:
+
+```text
+[Metrics] FPS=12.0 res=1920x1080 frames(S/E)=12/12 encT(avg)=29ms/frame
+          key=1 targetBitrate=2083k ACTUAL_BITRATE=1579kbps
+          nack=0 pli=0 fir=0 RTT=4.2ms ICE=succeeded writable=true
+```
+
+| Field | Description |
+| --- | --- |
+| `FPS` | Frames sent per second over the network |
+| `res` | Captured screen resolution |
+| `frames(S/E)` | Sent vs. encoded frames — equal values indicate a healthy stream |
+| `encT(avg)` | Average CPU encode time per frame |
+| `ACTUAL_BITRATE` | Measured outgoing bitrate in the last reporting interval |
+| `targetBitrate` | Encoder's requested bitrate |
+| `nack/pli/fir` | Packet-loss recovery counters — zero is healthy |
+| `RTT` | Round-trip network latency |
+| `ICE` | ICE connection state — `succeeded` confirms an established path |
+
+---
+
+## Build
+
+**Windows** (must be run on a Windows machine):
+
+```bash
+flutter build windows --release
+```
+
+**macOS** (includes code signing and notarization):
+
+```bash
+./build_macos.sh
+```
+
+FFmpeg binaries are bundled as Flutter assets:
+
+| Platform | Asset path |
+| --- | --- |
+| Windows | `assets/ffmpeg/windows/ffmpeg.exe` |
+| macOS | `assets/bin/macos/ffmpeg` |
+
+---
+
+## Development
+
+```bash
+# Run on Windows
+flutter run -d windows
+
+# Run on macOS
+flutter run -d macos
+```
+
+Set `telemetry.level` to `debug` in `config.json` to enable verbose WebSocket and FFmpeg logging.
