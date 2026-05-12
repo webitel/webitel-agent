@@ -20,7 +20,6 @@ import 'handlers/notification_handler.dart';
 /// - Manages WebSocket lifecycle (connect, authenticate, disconnect)
 /// - Routes incoming events to appropriate handlers
 /// - Maintains request-reply correlation via sequence numbers
-/// - Implements watchdog for detecting out-of-sync recording state
 /// - Handles network availability changes with debouncing
 ///
 /// Thread safety: All state mutations are serialized through async callbacks.
@@ -69,15 +68,6 @@ class WebitelSocket {
   bool _isSending = false;
 
   // ============================================================================
-  // Watchdog Timer (Sync Detection)
-  // ============================================================================
-
-  /// Periodic timer that checks server state to detect out-of-sync sessions.
-  /// Kills ghost recordings if no active calls exist on server.
-  Timer? _watchdogTimer;
-  static const _watchdogInterval = Duration(seconds: 30);
-
-  // ============================================================================
   // Streams & Callbacks
   // ============================================================================
 
@@ -104,6 +94,11 @@ class WebitelSocket {
 
   /// Prevents reconnect actions before app initialization is complete.
   bool _appInitialized = false;
+
+  /// Holds the callId when recording start was blocked by missing permission.
+  /// Cleared when permission is granted or the call ends.
+  String? _pendingPermissionCallId;
+  Timer? _permissionRetryTimer;
 
   // ============================================================================
   // Singleton Pattern
@@ -191,10 +186,6 @@ class WebitelSocket {
       await connect();
       await authenticate();
 
-      // Immediately check if local recording state matches server state.
-      // Catches cases where server dropped the call but client didn't notice.
-      await _checkSyncStatus();
-
       // Fetch minimal agent info to confirm session is valid.
       // Does NOT resync active calls (CallHandler handles that).
       await getAgentSession();
@@ -210,8 +201,6 @@ class WebitelSocket {
   /// Closes the auth gate (blocks all requests) until server sends 'hello'.
   /// Timeout: 7 seconds from challenge to hello. If exceeded, completes anyway
   /// to prevent deadlock (assumes auth is OK, worst case it fails on next request).
-  ///
-  /// Starts watchdog timer on success.
   Future<void> authenticate() async {
     if (_isAuthenticating) return;
     _isAuthenticating = true;
@@ -243,76 +232,10 @@ class WebitelSocket {
       );
 
       logger.info('[SOCKET] AUTH_COMPLETED');
-      _startWatchdog();
     } catch (e, st) {
       logger.error('[SOCKET] AUTH_FAILED: $e', e, st);
     } finally {
       _isAuthenticating = false;
-    }
-  }
-
-  // ============================================================================
-  // Watchdog (Out-of-Sync Detection)
-  // ============================================================================
-
-  /// Starts periodic background sync check (every 30 seconds).
-  /// Ensures local recording state matches actual server-side agent session.
-  void _startWatchdog() {
-    _watchdogTimer?.cancel();
-    _watchdogTimer = Timer.periodic(
-      _watchdogInterval,
-      (_) => _checkSyncStatus(),
-    );
-    logger.debug('[WATCHDOG] Periodic sync timer started (30s)');
-  }
-
-  /// Stops the periodic sync timer.
-  void _stopWatchdog() {
-    _watchdogTimer?.cancel();
-    _watchdogTimer = null;
-    logger.debug('[WATCHDOG] Periodic sync timer stopped');
-  }
-
-  /// Fetches active calls from server and compares to local state.
-  /// If server has no calls but client thinks recording is active -> kills it.
-  ///
-  /// This handles the race condition:
-  /// 1. Server drops call
-  /// 2. Network glitch delays the hangup event
-  /// 3. Client still thinks recording is running
-  /// 4. Watchdog detects mismatch -> forces stop
-  ///
-  /// Errors are logged but never thrown (don't crash watchdog loop).
-  Future<void> _checkSyncStatus() async {
-    // Only check if authenticated and connected.
-    if (!_connection.isConnected ||
-        _authGate == null ||
-        !_authGate!.isCompleted) {
-      return;
-    }
-
-    try {
-      // Request active calls for current user.
-      final response = await request(SocketActions.callByUser);
-
-      // Parse response. Expected format: { items: [...calls...] }
-      final List? activeCalls = response['items'] as List?;
-      final bool hasActiveCalls = activeCalls != null && activeCalls.isNotEmpty;
-
-      // Detect out-of-sync state.
-      if (!hasActiveCalls && _callHandler.screenRecordingActive) {
-        logger.warn(
-          '[WATCHDOG] Out-of-sync detected! No active calls via ${SocketActions.callByUser} '
-          'but recording marked active. Terminating orphaned session.',
-        );
-
-        // Force recording stop and clear internal state.
-        _onRecordingStateChanged(false, null);
-        _callHandler.clear();
-      }
-    } catch (e) {
-      // Silence watchdog errors to avoid log spam during network issues.
-      logger.error('[WATCHDOG] Sync check failed: $e');
     }
   }
 
@@ -401,7 +324,6 @@ class WebitelSocket {
   /// - Exactly one STOP per session
   void _onRecordingStateChanged(bool active, String? callId) {
     if (active) {
-      // Guard 1: Valid call context required
       if (callId == null) {
         logger.warn(
           '[SOCKET] RECORD_START skipped: missing callId '
@@ -410,18 +332,42 @@ class WebitelSocket {
         return;
       }
 
-      // Guard 2: Screenshot permission required
       if (!(_screenshotService?.isControlEnabled ?? false)) {
         logger.warn(
-          '[SOCKET] RECORD_START blocked: permission denied (callId=$callId)',
+          '[SOCKET] RECORD_START blocked: permission denied (callId=$callId) — scheduling retry',
+        );
+        _pendingPermissionCallId = callId;
+        _permissionRetryTimer ??= Timer.periodic(
+          const Duration(seconds: 5),
+          (_) {
+            if (!_callHandler.screenRecordingActive) {
+              _permissionRetryTimer?.cancel();
+              _permissionRetryTimer = null;
+              _pendingPermissionCallId = null;
+              return;
+            }
+            if (_screenshotService?.isControlEnabled ?? false) {
+              _permissionRetryTimer?.cancel();
+              _permissionRetryTimer = null;
+              final id = _pendingPermissionCallId!;
+              _pendingPermissionCallId = null;
+              logger.info('[SOCKET] RECORD_START (retry after permission) | callId=$id');
+              onScreenRecordStart?.call({'root_id': id, 'source': 'call_event'});
+            }
+          },
         );
         return;
       }
 
+      _permissionRetryTimer?.cancel();
+      _permissionRetryTimer = null;
+      _pendingPermissionCallId = null;
       logger.info('[SOCKET] RECORD_START | callId=$callId');
       onScreenRecordStart?.call({'root_id': callId, 'source': 'call_event'});
     } else {
-      // STOP: No guards, always fire
+      _permissionRetryTimer?.cancel();
+      _permissionRetryTimer = null;
+      _pendingPermissionCallId = null;
       logger.info('[SOCKET] RECORD_STOP | reason=session_ended');
       onScreenRecordStop?.call({'reason': 'session_ended'});
     }
@@ -582,7 +528,6 @@ class WebitelSocket {
   /// Critical cleanup handler called when WebSocket connection drops.
   ///
   /// Responsibilities:
-  /// - Stop watchdog timer
   /// - Force-stop any active recording (prevents ghost sessions)
   /// - Fail all pending requests
   /// - Clear state
@@ -590,7 +535,6 @@ class WebitelSocket {
   ///
   /// This is the most critical method for preventing ghost recordings.
   void _onDisconnected() {
-    _stopWatchdog();
     logger.warn('[SOCKET] DISCONNECT_DETECTED | Cleaning up state...');
 
     // ========================================================================
@@ -669,7 +613,6 @@ class WebitelSocket {
   /// Called when app is closing or user logs out.
   Future<void> disconnect() async {
     logger.info('[SOCKET] MANUAL_DISCONNECT | Disposing manager');
-    _stopWatchdog();
     _connection.dispose();
     _callHandler.clear();
     _notificationHandler.dispose();

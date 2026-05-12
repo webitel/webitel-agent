@@ -30,9 +30,6 @@ class SocketActions {
   static const agentSession = 'cc_agent_session';
   static const ack = 'ss_ack';
 
-  // [CALLS] Call-related requests
-  static const callByUser = 'call_by_user';
-
   static const ping = 'ping';
 }
 
