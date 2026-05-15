@@ -93,6 +93,9 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
       '[Capturer] Using Stereo Mix: $stereoMixId, Microphone: $micId',
     );
 
+    // Start audio capture once — regardless of how many monitors are present.
+    await startStreamingFFmpeg(stereoMixId, micId, dataChannel, 48 * 1000, mode);
+
     for (final source in sources) {
       final screenStream = await navigator.mediaDevices.getDisplayMedia({
         'video': {
@@ -103,14 +106,6 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
         },
         'audio': false,
       });
-
-      await startStreamingFFmpeg(
-        stereoMixId,
-        micId,
-        dataChannel,
-        48 * 1000,
-        mode,
-      );
 
       streams.add(screenStream);
       logger.info('[Capturer] Capture started for monitor ${source.name}');
