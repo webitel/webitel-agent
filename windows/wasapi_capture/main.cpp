@@ -22,9 +22,11 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "winmm.lib")
 
-constexpr UINT32 kOutSampleRate = 48000;
-constexpr UINT32 kOutChannels   = 2;
-constexpr size_t kChunkFrames   = 960; // 20ms at 48000
+constexpr UINT32 kOutChannels = 2;
+constexpr size_t kChunkFrames = 960; // 20ms worth of frames
+
+// Actual sample rate is read from the loopback device's mix format at startup.
+UINT32 g_sampleRate = 48000;
 
 std::atomic<bool> g_running{true};
 
@@ -123,6 +125,36 @@ static void convertToS16Stereo(const BYTE*        src,
     }
 }
 
+// -- Device sample rate query ------------------------------------------------
+
+// Returns the mix format sample rate of the default render endpoint.
+static UINT32 queryLoopbackSampleRate() {
+    IMMDeviceEnumerator* enumerator = nullptr;
+    IMMDevice*           device     = nullptr;
+    IAudioClient*        client     = nullptr;
+    WAVEFORMATEX*        wf         = nullptr;
+    UINT32               rate       = 48000; // safe fallback
+
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+    if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                                   CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                                   reinterpret_cast<void**>(&enumerator))) &&
+        SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device)) &&
+        SUCCEEDED(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL,
+                                   nullptr, reinterpret_cast<void**>(&client))) &&
+        SUCCEEDED(client->GetMixFormat(&wf))) {
+        rate = wf->nSamplesPerSec;
+    }
+
+    if (wf)       CoTaskMemFree(wf);
+    if (client)   client->Release();
+    if (device)   device->Release();
+    if (enumerator) enumerator->Release();
+    CoUninitialize();
+    return rate;
+}
+
 // -- Capture thread ----------------------------------------------------------
 
 static void captureThread(bool loopback) {
@@ -209,6 +241,14 @@ done:
 
 int main() {
     _setmode(_fileno(stdout), _O_BINARY);
+
+    // Resolve device sample rate before starting threads.
+    g_sampleRate = queryLoopbackSampleRate();
+
+    // Write sample rate as first 4 bytes so the caller can configure FFmpeg.
+    uint32_t rateLE = g_sampleRate;
+    fwrite(&rateLE, sizeof(rateLE), 1, stdout);
+    fflush(stdout);
 
     std::thread loopbackTh(captureThread, true);
     std::thread micTh(captureThread, false);

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -92,74 +93,113 @@ Future<void> startAudioCapture(
     runInShell: false,
   );
 
-  // wasapi_capture outputs s16le 48000Hz stereo PCM on stdout.
-  // FFmpeg reads it from pipe:0 and encodes to MP3.
-  final ffmpegArgs = [
-    '-f', 's16le',
-    '-ar', '48000',
-    '-ac', '2',
-    '-i', 'pipe:0',
-    '-c:a', 'libmp3lame',
-    '-b:a', '128k',
-    '-fflags', '+nobuffer',
-    '-flush_packets', '1',
-    '-f', 'mp3',
-    'pipe:1',
-  ];
-
-  logger.info('[Capturer] Starting FFmpeg ($mode): ffmpeg ${ffmpegArgs.join(' ')}');
-
-  final ffmpegProcess = await Process.start(
-    ffmpegPath,
-    ffmpegArgs,
-    runInShell: false,
-    workingDirectory: p.dirname(ffmpegPath),
-  );
-
   if (mode == FFmpegMode.streaming) {
     _streamingCaptureProcess = captureProcess;
-    _streamingFfmpegProcess  = ffmpegProcess;
   } else {
     _recordingCaptureProcess = captureProcess;
-    _recordingFfmpegProcess  = ffmpegProcess;
   }
-
-  // Pipe PCM from wasapi_capture stdout → FFmpeg stdin.
-  captureProcess.stdout.pipe(ffmpegProcess.stdin).catchError((e) {
-    logger.error('[Capturer] PCM pipe error', e);
-  });
 
   captureProcess.stderr
       .transform(const SystemEncoding().decoder)
       .listen((line) => logger.debug('[WasapiCapture] $line'));
 
-  ffmpegProcess.stderr
-      .transform(const SystemEncoding().decoder)
-      .listen((line) => logger.debug('[FFmpeg STDERR] $line'));
+  // wasapi_capture writes the device sample rate as a 4-byte LE uint32
+  // before any PCM data so we can pass the correct -ar value to FFmpeg.
+  final headerBuf = <int>[];
+  bool headerRead = false;
+  final ffmpegReady = Completer<Process>();
 
-  const chunkSize = 4096;
-  ffmpegProcess.stdout.listen(
-    (chunk) {
-      int offset = 0;
-      while (offset < chunk.length) {
-        final end = (offset + chunkSize < chunk.length)
-            ? offset + chunkSize
-            : chunk.length;
-        final subchunk = Uint8List.fromList(chunk.sublist(offset, end));
+  captureProcess.stdout.listen(
+    (chunk) async {
+      if (!headerRead) {
+        headerBuf.addAll(chunk);
+        if (headerBuf.length < 4) return;
 
-        if (audioChannel.state == RTCDataChannelState.RTCDataChannelOpen) {
-          audioChannel.send(RTCDataChannelMessage.fromBinary(subchunk));
+        headerRead = true;
+        final sampleRate = headerBuf[0] |
+            (headerBuf[1] << 8) |
+            (headerBuf[2] << 16) |
+            (headerBuf[3] << 24);
+        final remainder = Uint8List.fromList(headerBuf.sublist(4));
+
+        final ffmpegArgs = [
+          '-f', 's16le',
+          '-ar', '$sampleRate',
+          '-ac', '2',
+          '-i', 'pipe:0',
+          '-c:a', 'libmp3lame',
+          '-b:a', '128k',
+          '-fflags', '+nobuffer',
+          '-flush_packets', '1',
+          '-f', 'mp3',
+          'pipe:1',
+        ];
+
+        logger.info('[Capturer] Starting FFmpeg ($mode) ar=$sampleRate');
+
+        final ffmpegProcess = await Process.start(
+          ffmpegPath,
+          ffmpegArgs,
+          runInShell: false,
+          workingDirectory: p.dirname(ffmpegPath),
+        );
+
+        if (mode == FFmpegMode.streaming) {
+          _streamingFfmpegProcess = ffmpegProcess;
+        } else {
+          _recordingFfmpegProcess = ffmpegProcess;
         }
 
-        offset = end;
+        ffmpegProcess.stderr
+            .transform(const SystemEncoding().decoder)
+            .listen((line) => logger.debug('[FFmpeg STDERR] $line'));
+
+        const chunkSize = 4096;
+        ffmpegProcess.stdout.listen(
+          (data) {
+            int offset = 0;
+            while (offset < data.length) {
+              final end = (offset + chunkSize < data.length)
+                  ? offset + chunkSize
+                  : data.length;
+              final subchunk =
+                  Uint8List.fromList(data.sublist(offset, end));
+              if (audioChannel.state ==
+                  RTCDataChannelState.RTCDataChannelOpen) {
+                audioChannel.send(RTCDataChannelMessage.fromBinary(subchunk));
+              }
+              offset = end;
+            }
+          },
+          onDone: () {
+            logger.info('[Capturer] FFmpeg stdout done, closing DataChannel');
+            audioChannel.close();
+          },
+          onError: (e) => logger.error('[Capturer] FFmpeg stdout error', e),
+          cancelOnError: true,
+        );
+
+        ffmpegReady.complete(ffmpegProcess);
+
+        if (remainder.isNotEmpty) {
+          ffmpegProcess.stdin.add(remainder);
+        }
+        return;
+      }
+
+      // Forward PCM to FFmpeg; wait for it to start if still initialising.
+      final proc = await ffmpegReady.future;
+      proc.stdin.add(chunk);
+    },
+    onDone: () async {
+      if (ffmpegReady.isCompleted) {
+        final proc = await ffmpegReady.future;
+        await proc.stdin.close().catchError(
+          (e) => logger.error('[Capturer] FFmpeg stdin close error', e),
+        );
       }
     },
-    onDone: () {
-      logger.info('[Capturer] FFmpeg stdout done, closing DataChannel');
-      audioChannel.close();
-    },
-    onError: (e) => logger.error('[Capturer] FFmpeg stdout error', e),
-    cancelOnError: true,
+    onError: (e) => logger.error('[Capturer] PCM pipe error', e),
   );
 }
 
