@@ -25,18 +25,26 @@
 constexpr UINT32 kOutChannels = 2;
 constexpr size_t kChunkFrames = 960; // 20ms worth of frames
 
+// Max loopback delay we'll ever pre-fill (safety cap, in ms).
+constexpr uint32_t kMaxDelayMs = 8000;
+
 // Actual sample rate is read from the loopback device's mix format at startup.
 UINT32 g_sampleRate = 48000;
 
 std::atomic<bool> g_running{true};
 
-// Thread-safe PCM queue (interleaved stereo s16le)
+// Thread-safe PCM queue (interleaved stereo s16le).
+// firstQPC holds the QPC timestamp (100-ns units) of the very first sample
+// pushed into the queue. Used by main() to compute the loopback/mic offset.
 struct AudioQueue {
     std::mutex mtx;
     std::deque<int16_t> buf;
+    std::atomic<UINT64> firstQPC{0};
 
-    void push(const int16_t* data, size_t samples) {
+    void push(const int16_t* data, size_t samples, UINT64 qpc) {
         std::lock_guard<std::mutex> lk(mtx);
+        if (firstQPC.load(std::memory_order_relaxed) == 0 && samples > 0)
+            firstQPC.store(qpc, std::memory_order_release);
         buf.insert(buf.end(), data, data + samples);
     }
 
@@ -81,14 +89,14 @@ static bool isIeeeFloat(const WAVEFORMATEX* wf) {
 }
 
 // Convert one buffer of WASAPI PCM frames to s16le stereo.
-// Handles: float32, pcm16, pcm32. Mono is duplicated to stereo.
+// Handles: float32, pcm16, pcm32, pcm24. Mono is duplicated to stereo.
 static void convertToS16Stereo(const BYTE*        src,
                                 UINT32             numFrames,
                                 const WAVEFORMATEX* wf,
                                 std::vector<int16_t>& out) {
-    const bool   isFloat = isIeeeFloat(wf);
-    const WORD   ch      = wf->nChannels;
-    const WORD   bits    = wf->wBitsPerSample;
+    const bool   isFloat    = isIeeeFloat(wf);
+    const WORD   ch         = wf->nChannels;
+    const WORD   bits       = wf->wBitsPerSample;
     const UINT32 blockAlign = wf->nBlockAlign;
 
     out.resize(numFrames * kOutChannels);
@@ -147,9 +155,9 @@ static UINT32 queryLoopbackSampleRate() {
         rate = wf->nSamplesPerSec;
     }
 
-    if (wf)       CoTaskMemFree(wf);
-    if (client)   client->Release();
-    if (device)   device->Release();
+    if (wf)         CoTaskMemFree(wf);
+    if (client)     client->Release();
+    if (device)     device->Release();
     if (enumerator) enumerator->Release();
     CoUninitialize();
     return rate;
@@ -167,10 +175,10 @@ static void captureThread(bool loopback) {
     WAVEFORMATEX*        wf         = nullptr;
 
     auto cleanup = [&] {
-        if (wf)       CoTaskMemFree(wf);
-        if (capture)  capture->Release();
-        if (client)   client->Release();
-        if (device)   device->Release();
+        if (wf)         CoTaskMemFree(wf);
+        if (capture)    capture->Release();
+        if (client)     client->Release();
+        if (device)     device->Release();
         if (enumerator) enumerator->Release();
         CoUninitialize();
     };
@@ -211,19 +219,20 @@ static void captureThread(bool loopback) {
         if (FAILED(capture->GetNextPacketSize(&packetSize))) break;
 
         while (packetSize > 0) {
-            BYTE*  data       = nullptr;
-            UINT32 numFrames  = 0;
-            DWORD  flags      = 0;
+            BYTE*  data      = nullptr;
+            UINT32 numFrames = 0;
+            DWORD  flags     = 0;
+            UINT64 qpcPos    = 0;
 
             if (FAILED(capture->GetBuffer(&data, &numFrames, &flags,
-                                          nullptr, nullptr)))
+                                          nullptr, &qpcPos)))
                 break;
 
             if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
                 queue.pushSilence(numFrames * kOutChannels);
             } else if (numFrames > 0) {
                 convertToS16Stereo(data, numFrames, wf, converted);
-                queue.push(converted.data(), converted.size());
+                queue.push(converted.data(), converted.size(), qpcPos);
             }
 
             capture->ReleaseBuffer(numFrames);
@@ -249,7 +258,6 @@ int main() {
     fflush(stdout);
 
     // Dart signals graceful shutdown by closing our stdin pipe.
-    // We detach so we don't need to join — the process exits after the flush.
     std::thread([] {
         while (std::getchar() != EOF) {}
         g_running = false;
@@ -258,18 +266,43 @@ int main() {
     std::thread loopbackTh(captureThread, true);
     std::thread micTh(captureThread, false);
 
-    constexpr size_t  kChunkSamples  = kChunkFrames * kOutChannels;
-    constexpr float   kLoopbackGain  = 0.15f;
-    constexpr uint32_t kLoopbackDelayMs = 5000;
+    constexpr size_t kChunkSamples = kChunkFrames * kOutChannels;
+    constexpr float  kLoopbackGain = 0.15f;
 
     std::vector<int16_t> lb(kChunkSamples), mic(kChunkSamples),
                          out(kChunkSamples);
 
-    // Pre-fill with silence so loopback is held back by kLoopbackDelayMs.
-    // This compensates for the Windows audio engine render buffer that causes
-    // loopback data to arrive earlier than the corresponding mic signal.
-    const size_t lbDelaySamples =
-        static_cast<size_t>(kLoopbackDelayMs) * g_sampleRate / 1000 * kOutChannels;
+    // Wait until both streams report their first QPC timestamp.
+    // This is needed to measure the actual render-ahead offset of the loopback
+    // stream relative to the microphone.
+    while (g_running) {
+        UINT64 lbQPC  = g_loopback.firstQPC.load(std::memory_order_acquire);
+        UINT64 micQPC = g_mic.firstQPC.load(std::memory_order_acquire);
+        if (lbQPC != 0 && micQPC != 0) break;
+        Sleep(5);
+    }
+
+    // Compute the loopback-ahead offset from QPC timestamps.
+    // loopback QPC < mic QPC because the render engine writes audio ahead of
+    // physical playback; loopback captures it earlier than the mic hears it.
+    // The difference is the exact delay we need to add back.
+    size_t lbDelaySamples = 0;
+    {
+        UINT64 lbQPC  = g_loopback.firstQPC.load(std::memory_order_acquire);
+        UINT64 micQPC = g_mic.firstQPC.load(std::memory_order_acquire);
+
+        if (lbQPC < micQPC) {
+            UINT64 diffHns = micQPC - lbQPC; // 100-ns units
+            lbDelaySamples = static_cast<size_t>(
+                diffHns * g_sampleRate / 10'000'000ULL * kOutChannels);
+        }
+
+        // Cap to kMaxDelayMs to guard against bogus driver timestamps.
+        const size_t maxSamples =
+            static_cast<size_t>(kMaxDelayMs) * g_sampleRate / 1000 * kOutChannels;
+        lbDelaySamples = std::min(lbDelaySamples, maxSamples);
+    }
+
     std::deque<int16_t> lbDelay(lbDelaySamples, 0);
 
     bool stdoutClosed = false;
