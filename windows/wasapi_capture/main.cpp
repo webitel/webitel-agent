@@ -3,6 +3,7 @@
 // Usage: wasapi_capture.exe
 // Output: 4-byte LE sample-rate header, then s16le stereo PCM at device rate
 
+#define NOMINMAX
 #include <windows.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
