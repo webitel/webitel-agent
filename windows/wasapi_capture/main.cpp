@@ -259,8 +259,8 @@ int main() {
     std::thread micTh(captureThread, false);
 
     constexpr size_t  kChunkSamples  = kChunkFrames * kOutChannels;
-    constexpr float   kLoopbackGain  = 0.35f;
-    constexpr uint32_t kLoopbackDelayMs = 3000;
+    constexpr float   kLoopbackGain  = 0.15f;
+    constexpr uint32_t kLoopbackDelayMs = 5000;
 
     std::vector<int16_t> lb(kChunkSamples), mic(kChunkSamples),
                          out(kChunkSamples);
