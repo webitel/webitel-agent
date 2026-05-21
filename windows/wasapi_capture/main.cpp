@@ -260,7 +260,7 @@ int main() {
     // Delay the loopback stream by 3 s before mixing with the mic.
     // The Windows audio engine pre-buffers render data, so loopback arrives
     // earlier than the mic signal by roughly this amount.
-    constexpr uint32_t kLoopbackDelayMs = 5000;
+    constexpr uint32_t kLoopbackDelayMs = 5500;
     const size_t lbDelaySamples =
         static_cast<size_t>(kLoopbackDelayMs) * g_sampleRate / 1000 * kOutChannels;
     std::deque<int16_t> lbDelay(lbDelaySamples, 0);
