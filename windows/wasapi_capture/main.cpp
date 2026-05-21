@@ -1,7 +1,7 @@
 // wasapi_capture: captures system audio (loopback) + microphone via WASAPI,
 // mixes them, and writes s16le PCM to stdout.
 // Usage: wasapi_capture.exe
-// Output: s16le, 48000 Hz, 2 channels (stereo)
+// Output: 4-byte LE sample-rate header, then s16le stereo PCM at device rate
 
 #include <windows.h>
 #include <mmdeviceapi.h>
@@ -257,11 +257,33 @@ int main() {
     std::vector<int16_t> lb(kChunkSamples), mic(kChunkSamples),
                          out(kChunkSamples);
 
+    // Delay the loopback stream by 3 s before mixing with the mic.
+    // The Windows audio engine pre-buffers render data, so loopback arrives
+    // earlier than the mic signal by roughly this amount.
+    constexpr uint32_t kLoopbackDelayMs = 3000;
+    const size_t lbDelaySamples =
+        static_cast<size_t>(kLoopbackDelayMs) * g_sampleRate / 1000 * kOutChannels;
+    std::deque<int16_t> lbDelay(lbDelaySamples, 0);
+
     while (g_running) {
-        if (!g_loopback.pop(lb.data(),  kChunkSamples) ||
+        // Drain g_loopback into the delay buffer.
+        {
+            std::lock_guard<std::mutex> lk(g_loopback.mtx);
+            lbDelay.insert(lbDelay.end(),
+                           g_loopback.buf.begin(),
+                           g_loopback.buf.end());
+            g_loopback.buf.clear();
+        }
+
+        if (lbDelay.size() < kChunkSamples ||
             !g_mic.pop(mic.data(), kChunkSamples)) {
             Sleep(5);
             continue;
+        }
+
+        for (size_t i = 0; i < kChunkSamples; i++) {
+            lb[i] = lbDelay.front();
+            lbDelay.pop_front();
         }
 
         for (size_t i = 0; i < kChunkSamples; i++) {
