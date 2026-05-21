@@ -294,9 +294,9 @@ int main() {
         }
 
         for (size_t i = 0; i < kChunkSamples; i++) {
-            int32_t mixed = static_cast<int32_t>(lb[i] * kLoopbackGain) + mic[i];
+            float mixed = lb[i] * kLoopbackGain + static_cast<float>(mic[i]);
             out[i] = static_cast<int16_t>(
-                std::clamp(mixed, (int32_t)-32768, (int32_t)32767));
+                std::clamp(mixed, -32768.0f, 32767.0f));
         }
 
         if (fwrite(out.data(), sizeof(int16_t), kChunkSamples, stdout)
@@ -320,9 +320,9 @@ int main() {
                 lbDelay.pop_front();
             }
             for (size_t i = 0; i < kChunkSamples; i++) {
-                int32_t s = static_cast<int32_t>(lb[i] * kLoopbackGain);
+                float s = lb[i] * kLoopbackGain;
                 out[i] = static_cast<int16_t>(
-                    std::clamp(s, (int32_t)-32768, (int32_t)32767));
+                    std::clamp(s, -32768.0f, 32767.0f));
             }
             if (fwrite(out.data(), sizeof(int16_t), kChunkSamples, stdout)
                     < kChunkSamples)
