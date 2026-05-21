@@ -294,7 +294,7 @@ int main() {
         if (lbQPC < micQPC) {
             UINT64 diffHns = micQPC - lbQPC; // 100-ns units
             lbDelaySamples = static_cast<size_t>(
-                diffHns * g_sampleRate / 10'000'000ULL * kOutChannels);
+                diffHns * g_sampleRate / 10000000ULL * kOutChannels);
         }
 
         // Cap to kMaxDelayMs to guard against bogus driver timestamps.
