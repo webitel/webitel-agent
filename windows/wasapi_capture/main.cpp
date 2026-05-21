@@ -260,7 +260,7 @@ int main() {
 
     constexpr size_t  kChunkSamples  = kChunkFrames * kOutChannels;
     constexpr float   kLoopbackGain  = 0.35f;
-    constexpr uint32_t kLoopbackDelayMs = 6000;
+    constexpr uint32_t kLoopbackDelayMs = 7000;
 
     std::vector<int16_t> lb(kChunkSamples), mic(kChunkSamples),
                          out(kChunkSamples);
@@ -328,6 +328,16 @@ int main() {
                     < kChunkSamples)
                 break;
         }
+        // 2s of silence padding so FFmpeg doesn't clip the tail.
+        std::fill(out.begin(), out.end(), 0);
+        const size_t silenceChunks =
+            2 * g_sampleRate * kOutChannels / kChunkSamples;
+        for (size_t i = 0; i < silenceChunks; i++) {
+            if (fwrite(out.data(), sizeof(int16_t), kChunkSamples, stdout)
+                    < kChunkSamples)
+                break;
+        }
+
         fflush(stdout);
     }
 

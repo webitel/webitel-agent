@@ -217,13 +217,13 @@ Future<void> stopStereoAudioFFmpeg(FFmpegMode mode) async {
   }
 
   // Close wasapi_capture's stdin — the process detects EOF, flushes the
-  // 6-second loopback delay buffer to stdout, then exits naturally.
+  // 7-second loopback delay buffer + 2s silence tail to stdout, then exits.
   // FFmpeg's stdin closes when wasapi_capture's stdout closes (onDone).
   if (captureProcess != null) {
     try {
       await captureProcess.stdin.close().catchError((_) {});
       await captureProcess.exitCode.timeout(
-        const Duration(seconds: 8), // 6s delay buffer + 2s grace
+        const Duration(seconds: 11), // 7s delay buffer + 2s silence + 2s grace
         onTimeout: () {
           captureProcess?.kill(ProcessSignal.sigkill);
           return -1;
@@ -236,9 +236,9 @@ Future<void> stopStereoAudioFFmpeg(FFmpegMode mode) async {
 
   if (ffmpegProcess != null) {
     try {
-      // Give FFmpeg a moment to flush after stdin closes.
+      // Give FFmpeg time to encode the silence tail and flush.
       await ffmpegProcess.exitCode.timeout(
-        const Duration(seconds: 3),
+        const Duration(seconds: 5),
         onTimeout: () {
           ffmpegProcess?.kill(ProcessSignal.sigkill);
           return -1;
