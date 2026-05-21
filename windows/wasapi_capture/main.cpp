@@ -260,7 +260,7 @@ int main() {
     // Delay the loopback stream by 3 s before mixing with the mic.
     // The Windows audio engine pre-buffers render data, so loopback arrives
     // earlier than the mic signal by roughly this amount.
-    constexpr uint32_t kLoopbackDelayMs = 3000;
+    constexpr uint32_t kLoopbackDelayMs = 5000;
     const size_t lbDelaySamples =
         static_cast<size_t>(kLoopbackDelayMs) * g_sampleRate / 1000 * kOutChannels;
     std::deque<int16_t> lbDelay(lbDelaySamples, 0);
@@ -286,8 +286,10 @@ int main() {
             lbDelay.pop_front();
         }
 
+        // Attenuate loopback so it doesn't overpower the microphone.
+        constexpr float kLoopbackGain = 0.35f;
         for (size_t i = 0; i < kChunkSamples; i++) {
-            int32_t mixed = static_cast<int32_t>(lb[i]) + mic[i];
+            int32_t mixed = static_cast<int32_t>(lb[i] * kLoopbackGain) + mic[i];
             out[i] = static_cast<int16_t>(
                 std::clamp(mixed, (int32_t)-32768, (int32_t)32767));
         }
