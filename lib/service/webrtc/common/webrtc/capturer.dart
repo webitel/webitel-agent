@@ -116,22 +116,33 @@ Future<void> startAudioCapture(
         if (headerBuf.length < 4) return;
 
         headerRead = true;
-        final sampleRate = headerBuf[0] |
+        final sampleRate =
+            headerBuf[0] |
             (headerBuf[1] << 8) |
             (headerBuf[2] << 16) |
             (headerBuf[3] << 24);
         final remainder = Uint8List.fromList(headerBuf.sublist(4));
 
         final ffmpegArgs = [
-          '-f', 's16le',
-          '-ar', '$sampleRate',
-          '-ac', '2',
-          '-i', 'pipe:0',
-          '-c:a', 'libmp3lame',
-          '-b:a', '128k',
-          '-fflags', '+nobuffer',
-          '-flush_packets', '1',
-          '-f', 'mp3',
+          '-f',
+          's16le',
+          '-ar',
+          '$sampleRate',
+          '-ac',
+          '2',
+          '-i',
+          'pipe:0',
+          ...['-af', 'adelay=3:all=1'],
+          '-c:a',
+          'libmp3lame',
+          '-b:a',
+          '128k',
+          '-fflags',
+          '+nobuffer',
+          '-flush_packets',
+          '1',
+          '-f',
+          'mp3',
           'pipe:1',
         ];
 
@@ -159,11 +170,11 @@ Future<void> startAudioCapture(
           (data) {
             int offset = 0;
             while (offset < data.length) {
-              final end = (offset + chunkSize < data.length)
-                  ? offset + chunkSize
-                  : data.length;
-              final subchunk =
-                  Uint8List.fromList(data.sublist(offset, end));
+              final end =
+                  (offset + chunkSize < data.length)
+                      ? offset + chunkSize
+                      : data.length;
+              final subchunk = Uint8List.fromList(data.sublist(offset, end));
               if (audioChannel.state ==
                   RTCDataChannelState.RTCDataChannelOpen) {
                 audioChannel.send(RTCDataChannelMessage.fromBinary(subchunk));
@@ -209,10 +220,10 @@ Future<void> stopStereoAudioFFmpeg(FFmpegMode mode) async {
 
   if (mode == FFmpegMode.streaming) {
     captureProcess = _streamingCaptureProcess;
-    ffmpegProcess  = _streamingFfmpegProcess;
+    ffmpegProcess = _streamingFfmpegProcess;
   } else {
     captureProcess = _recordingCaptureProcess;
-    ffmpegProcess  = _recordingFfmpegProcess;
+    ffmpegProcess = _recordingFfmpegProcess;
   }
 
   // Stop wasapi_capture first — closing its stdout will close FFmpeg's stdin,
@@ -220,11 +231,13 @@ Future<void> stopStereoAudioFFmpeg(FFmpegMode mode) async {
   if (captureProcess != null) {
     try {
       captureProcess.kill(ProcessSignal.sigterm);
-      await captureProcess.exitCode
-          .timeout(const Duration(seconds: 2), onTimeout: () {
-        captureProcess?.kill(ProcessSignal.sigkill);
-        return -1;
-      });
+      await captureProcess.exitCode.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () {
+          captureProcess?.kill(ProcessSignal.sigkill);
+          return -1;
+        },
+      );
     } catch (e, st) {
       logger.error('[Capturer] wasapi_capture shutdown error', e, st);
     }
@@ -233,11 +246,13 @@ Future<void> stopStereoAudioFFmpeg(FFmpegMode mode) async {
   if (ffmpegProcess != null) {
     try {
       // Give FFmpeg a moment to flush after stdin closes.
-      await ffmpegProcess.exitCode
-          .timeout(const Duration(seconds: 3), onTimeout: () {
-        ffmpegProcess?.kill(ProcessSignal.sigkill);
-        return -1;
-      });
+      await ffmpegProcess.exitCode.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {
+          ffmpegProcess?.kill(ProcessSignal.sigkill);
+          return -1;
+        },
+      );
       await ffmpegProcess.stdin.close();
     } catch (e, st) {
       logger.error('[Capturer] FFmpeg shutdown error', e, st);
@@ -246,10 +261,10 @@ Future<void> stopStereoAudioFFmpeg(FFmpegMode mode) async {
 
   if (mode == FFmpegMode.streaming) {
     _streamingCaptureProcess = null;
-    _streamingFfmpegProcess  = null;
+    _streamingFfmpegProcess = null;
   } else {
     _recordingCaptureProcess = null;
-    _recordingFfmpegProcess  = null;
+    _recordingFfmpegProcess = null;
   }
 
   logger.info('[Capturer] Audio processes stopped ($mode).');
