@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -7,46 +6,10 @@ import 'package:webitel_desk_track/config/service.dart';
 import 'package:webitel_desk_track/core/logger/logger.dart';
 import 'package:webitel_desk_track/service/ffmpeg/manager/manager.dart';
 
-Future<String?> _findDeviceByKeywords(List<String> keywords) async {
-  final ffmpegPath = await FFmpegManager.instance.path;
-  final process = await Process.start(
-    ffmpegPath,
-    ['-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'],
-    runInShell: false,
-    workingDirectory: p.dirname(ffmpegPath),
-  );
-
-  String? foundName;
-  await for (var line in process.stderr
-      .transform(utf8.decoder)
-      .transform(LineSplitter())) {
-    // FFmpeg dshow output usually looks like: [dshow @ ...]  "Stereo Mix (Realtek Audio)"
-    for (var keyword in keywords) {
-      if (line.contains(keyword) && line.contains('"')) {
-        final match = RegExp(r'"(.*)"').firstMatch(line);
-        if (match != null) {
-          foundName = match.group(1);
-          break;
-        }
-      }
-    }
-    if (foundName != null) break;
-  }
-
-  process.kill();
-  return foundName;
-}
-
-Future<String?> getStereoMixDeviceId() async {
-  final keywords = AppConfig.instance.stereoMixKeywords;
-  logger.info('[StereoMix] Searching with keywords: $keywords');
-  return await _findDeviceByKeywords(keywords);
-}
-
-Future<String?> getMicrophoneDeviceId() async {
-  final keywords = AppConfig.instance.microphoneKeywords;
-  logger.info('[Microphone] Searching with keywords: $keywords');
-  return await _findDeviceByKeywords(keywords);
+// wasapi_capture.exe is installed next to the main app executable by CMake.
+String get _wasapiCapturePath {
+  final appDir = p.dirname(Platform.resolvedExecutable);
+  return p.join(appDir, 'wasapi_capture.exe');
 }
 
 Future<List<MediaStream>> captureAllDesktopScreensWindows(
@@ -82,19 +45,7 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
       logger.info('[Capturer] DataChannel state: $state');
     };
 
-    final stereoMixId = await getStereoMixDeviceId();
-    final micId = await getMicrophoneDeviceId();
-
-    if (stereoMixId == null || micId == null) {
-      logger.error('[Capturer] Stereo Mix or Microphone not found!');
-      return [];
-    }
-    logger.info(
-      '[Capturer] Using Stereo Mix: $stereoMixId, Microphone: $micId',
-    );
-
-    // Start audio capture once — regardless of how many monitors are present.
-    await startStreamingFFmpeg(stereoMixId, micId, dataChannel, 48 * 1000, mode);
+    await startAudioCapture(dataChannel, mode);
 
     for (final source in sources) {
       final screenStream = await navigator.mediaDevices.getDisplayMedia({
@@ -120,39 +71,45 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
 
 enum FFmpegMode { streaming, recording }
 
-Process? _streamingProcess;
-Process? _recordingProcess;
+// Each mode stores a pair: (wasapi_capture process, ffmpeg process).
+Process? _streamingCaptureProcess;
+Process? _streamingFfmpegProcess;
+Process? _recordingCaptureProcess;
+Process? _recordingFfmpegProcess;
 
-Future<Process?> startStreamingFFmpeg(
-  String stereoMixId,
-  String micId,
+Future<void> startAudioCapture(
   RTCDataChannel audioChannel,
-  int bitrate,
   FFmpegMode mode,
 ) async {
-  final ffmpegArgs = [
-    '-f', 'dshow', // DirectShow input
-    '-i', 'audio=$stereoMixId', // Stereo Mix input
-    '-f', 'dshow',
-    '-i', 'audio=$micId', // Microphone input
-    '-filter_complex',
-    '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0', // Mix audio
-    '-c:a', 'libmp3lame', // MP3 encoder
-    '-b:a', '${bitrate}k', // Bitrate
-    '-ar', '44100', // Sample rate
-    '-ac', '2', // Stereo
-    '-fflags', '+nobuffer', // Low latency
-    '-flush_packets', '1', // Flush packets immediately
-    '-f', 'mp3', // Output format
-    'pipe:1', // Output to stdout
-  ];
+  final ffmpegPath = await FFmpegManager.instance.path;
+  final capturePath = _wasapiCapturePath;
 
-  logger.info(
-    '[Capturer] Starting FFmpeg ($mode): ffmpeg ${ffmpegArgs.join(' ')}',
+  logger.info('[Capturer] Starting wasapi_capture ($mode): $capturePath');
+
+  final captureProcess = await Process.start(
+    capturePath,
+    [],
+    runInShell: false,
   );
 
-  final ffmpegPath = await FFmpegManager.instance.path;
-  final process = await Process.start(
+  // wasapi_capture outputs s16le 48000Hz stereo PCM on stdout.
+  // FFmpeg reads it from pipe:0 and encodes to MP3.
+  final ffmpegArgs = [
+    '-f', 's16le',
+    '-ar', '48000',
+    '-ac', '2',
+    '-i', 'pipe:0',
+    '-c:a', 'libmp3lame',
+    '-b:a', '128k',
+    '-fflags', '+nobuffer',
+    '-flush_packets', '1',
+    '-f', 'mp3',
+    'pipe:1',
+  ];
+
+  logger.info('[Capturer] Starting FFmpeg ($mode): ffmpeg ${ffmpegArgs.join(' ')}');
+
+  final ffmpegProcess = await Process.start(
     ffmpegPath,
     ffmpegArgs,
     runInShell: false,
@@ -160,25 +117,34 @@ Future<Process?> startStreamingFFmpeg(
   );
 
   if (mode == FFmpegMode.streaming) {
-    _streamingProcess = process;
+    _streamingCaptureProcess = captureProcess;
+    _streamingFfmpegProcess  = ffmpegProcess;
   } else {
-    _recordingProcess = process;
+    _recordingCaptureProcess = captureProcess;
+    _recordingFfmpegProcess  = ffmpegProcess;
   }
 
-  process.stderr
-      .transform(utf8.decoder)
-      .transform(LineSplitter())
+  // Pipe PCM from wasapi_capture stdout → FFmpeg stdin.
+  captureProcess.stdout.pipe(ffmpegProcess.stdin).catchError((e) {
+    logger.error('[Capturer] PCM pipe error', e);
+  });
+
+  captureProcess.stderr
+      .transform(const SystemEncoding().decoder)
+      .listen((line) => logger.debug('[WasapiCapture] $line'));
+
+  ffmpegProcess.stderr
+      .transform(const SystemEncoding().decoder)
       .listen((line) => logger.debug('[FFmpeg STDERR] $line'));
 
   const chunkSize = 4096;
-  process.stdout.listen(
+  ffmpegProcess.stdout.listen(
     (chunk) {
       int offset = 0;
       while (offset < chunk.length) {
-        final end =
-            (offset + chunkSize < chunk.length)
-                ? offset + chunkSize
-                : chunk.length;
+        final end = (offset + chunkSize < chunk.length)
+            ? offset + chunkSize
+            : chunk.length;
         final subchunk = Uint8List.fromList(chunk.sublist(offset, end));
 
         if (audioChannel.state == RTCDataChannelState.RTCDataChannelOpen) {
@@ -195,52 +161,58 @@ Future<Process?> startStreamingFFmpeg(
     onError: (e) => logger.error('[Capturer] FFmpeg stdout error', e),
     cancelOnError: true,
   );
-
-  return process;
 }
 
 Future<void> stopStereoAudioFFmpeg(FFmpegMode mode) async {
-  Process? process;
-  if (mode == FFmpegMode.streaming) process = _streamingProcess;
-  if (mode == FFmpegMode.recording) process = _recordingProcess;
+  Process? captureProcess;
+  Process? ffmpegProcess;
 
-  if (process == null) return;
-
-  try {
-    logger.info('[Capturer] Requesting FFmpeg to stop...');
-
-    // Sending 'q' command to FFmpeg's stdin for a graceful shutdown.
-    // FFmpeg interprets 'q' as a signal to finish muxing and exit.
-    process.stdin.writeln('q');
-    await process.stdin.flush();
-
-    // CRITICAL: Do NOT use process.stdout.drain() or process.stderr.drain() here.
-    // These streams are already being listened to in startStreamingFFmpeg.
-    // Attempting to listen again causes "Bad state: Stream has already been listened to".
-
-    // Wait for the process to exit naturally after receiving 'q'.
-    await process.exitCode.timeout(
-      const Duration(seconds: 2),
-      onTimeout: () {
-        // If FFmpeg is stuck and doesn't exit within the timeout, force kill it.
-        logger.warn(
-          '[Capturer] FFmpeg graceful exit timeout. Killing process.',
-        );
-        process?.kill(ProcessSignal.sigkill);
-        return -1;
-      },
-    );
-
-    // Close stdin after the process has exited or been killed.
-    await process.stdin.close();
-  } catch (e, st) {
-    logger.error('[Capturer] Exception during FFmpeg shutdown', e, st);
-  } finally {
-    // Reset process reference to allow for future restarts.
-    if (mode == FFmpegMode.streaming) _streamingProcess = null;
-    if (mode == FFmpegMode.recording) _recordingProcess = null;
-    logger.info('[Capturer] FFmpeg process reference cleared.');
+  if (mode == FFmpegMode.streaming) {
+    captureProcess = _streamingCaptureProcess;
+    ffmpegProcess  = _streamingFfmpegProcess;
+  } else {
+    captureProcess = _recordingCaptureProcess;
+    ffmpegProcess  = _recordingFfmpegProcess;
   }
+
+  // Stop wasapi_capture first — closing its stdout will close FFmpeg's stdin,
+  // which lets FFmpeg finish muxing and exit naturally.
+  if (captureProcess != null) {
+    try {
+      captureProcess.kill(ProcessSignal.sigterm);
+      await captureProcess.exitCode
+          .timeout(const Duration(seconds: 2), onTimeout: () {
+        captureProcess?.kill(ProcessSignal.sigkill);
+        return -1;
+      });
+    } catch (e, st) {
+      logger.error('[Capturer] wasapi_capture shutdown error', e, st);
+    }
+  }
+
+  if (ffmpegProcess != null) {
+    try {
+      // Give FFmpeg a moment to flush after stdin closes.
+      await ffmpegProcess.exitCode
+          .timeout(const Duration(seconds: 3), onTimeout: () {
+        ffmpegProcess?.kill(ProcessSignal.sigkill);
+        return -1;
+      });
+      await ffmpegProcess.stdin.close();
+    } catch (e, st) {
+      logger.error('[Capturer] FFmpeg shutdown error', e, st);
+    }
+  }
+
+  if (mode == FFmpegMode.streaming) {
+    _streamingCaptureProcess = null;
+    _streamingFfmpegProcess  = null;
+  } else {
+    _recordingCaptureProcess = null;
+    _recordingFfmpegProcess  = null;
+  }
+
+  logger.info('[Capturer] Audio processes stopped ($mode).');
 }
 
 Future<MediaStream?> captureDesktopScreen() async {
@@ -267,12 +239,6 @@ Future<MediaStream?> captureDesktopScreen() async {
     final systemAudioTracks = screenStream.getAudioTracks();
     logger.info(
       '[Capturer] System audio tracks captured: ${systemAudioTracks.length}',
-    );
-
-    final mediaDevices = navigator.mediaDevices;
-    var devices = await mediaDevices.enumerateDevices();
-    logger.info(
-      '[Capturer] Enumerated media devices for mic: ${devices.length}',
     );
 
     logger.info('[Capturer] Screen + mic capture started successfully');
