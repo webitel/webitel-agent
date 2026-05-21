@@ -216,13 +216,14 @@ Future<void> stopStereoAudioFFmpeg(FFmpegMode mode) async {
     ffmpegProcess = _recordingFfmpegProcess;
   }
 
-  // Stop wasapi_capture first — closing its stdout will close FFmpeg's stdin,
-  // which lets FFmpeg finish muxing and exit naturally.
+  // Close wasapi_capture's stdin — the process detects EOF, flushes the
+  // 6-second loopback delay buffer to stdout, then exits naturally.
+  // FFmpeg's stdin closes when wasapi_capture's stdout closes (onDone).
   if (captureProcess != null) {
     try {
-      captureProcess.kill(ProcessSignal.sigterm);
+      await captureProcess.stdin.close().catchError((_) {});
       await captureProcess.exitCode.timeout(
-        const Duration(seconds: 2),
+        const Duration(seconds: 8), // 6s delay buffer + 2s grace
         onTimeout: () {
           captureProcess?.kill(ProcessSignal.sigkill);
           return -1;

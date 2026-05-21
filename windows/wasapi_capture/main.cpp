@@ -242,31 +242,38 @@ done:
 int main() {
     _setmode(_fileno(stdout), _O_BINARY);
 
-    // Resolve device sample rate before starting threads.
     g_sampleRate = queryLoopbackSampleRate();
 
-    // Write sample rate as first 4 bytes so the caller can configure FFmpeg.
     uint32_t rateLE = g_sampleRate;
     fwrite(&rateLE, sizeof(rateLE), 1, stdout);
     fflush(stdout);
 
+    // Dart signals graceful shutdown by closing our stdin pipe.
+    // We detach so we don't need to join — the process exits after the flush.
+    std::thread([] {
+        while (std::getchar() != EOF) {}
+        g_running = false;
+    }).detach();
+
     std::thread loopbackTh(captureThread, true);
     std::thread micTh(captureThread, false);
 
-    constexpr size_t kChunkSamples = kChunkFrames * kOutChannels;
+    constexpr size_t  kChunkSamples  = kChunkFrames * kOutChannels;
+    constexpr float   kLoopbackGain  = 0.35f;
+    constexpr uint32_t kLoopbackDelayMs = 6000;
+
     std::vector<int16_t> lb(kChunkSamples), mic(kChunkSamples),
                          out(kChunkSamples);
 
-    // Delay the loopback stream by 3 s before mixing with the mic.
-    // The Windows audio engine pre-buffers render data, so loopback arrives
-    // earlier than the mic signal by roughly this amount.
-    constexpr uint32_t kLoopbackDelayMs = 5500;
+    // Pre-fill with silence so loopback is held back by kLoopbackDelayMs.
+    // This compensates for the Windows audio engine render buffer that causes
+    // loopback data to arrive earlier than the corresponding mic signal.
     const size_t lbDelaySamples =
         static_cast<size_t>(kLoopbackDelayMs) * g_sampleRate / 1000 * kOutChannels;
     std::deque<int16_t> lbDelay(lbDelaySamples, 0);
 
+    bool stdoutClosed = false;
     while (g_running) {
-        // Drain g_loopback into the delay buffer.
         {
             std::lock_guard<std::mutex> lk(g_loopback.mtx);
             lbDelay.insert(lbDelay.end(),
@@ -286,8 +293,6 @@ int main() {
             lbDelay.pop_front();
         }
 
-        // Attenuate loopback so it doesn't overpower the microphone.
-        constexpr float kLoopbackGain = 0.35f;
         for (size_t i = 0; i < kChunkSamples; i++) {
             int32_t mixed = static_cast<int32_t>(lb[i] * kLoopbackGain) + mic[i];
             out[i] = static_cast<int16_t>(
@@ -296,12 +301,35 @@ int main() {
 
         if (fwrite(out.data(), sizeof(int16_t), kChunkSamples, stdout)
                 < kChunkSamples) {
-            break; // stdout closed (Dart process killed)
+            stdoutClosed = true;
+            break;
         }
     }
 
     g_running = false;
     loopbackTh.join();
     micTh.join();
+
+    // Flush the remaining loopback delay buffer mixed with silence.
+    // Skipped if stdout was already closed (FFmpeg died before us).
+    if (!stdoutClosed) {
+        std::fill(mic.begin(), mic.end(), 0);
+        while (lbDelay.size() >= kChunkSamples) {
+            for (size_t i = 0; i < kChunkSamples; i++) {
+                lb[i] = lbDelay.front();
+                lbDelay.pop_front();
+            }
+            for (size_t i = 0; i < kChunkSamples; i++) {
+                int32_t s = static_cast<int32_t>(lb[i] * kLoopbackGain);
+                out[i] = static_cast<int16_t>(
+                    std::clamp(s, (int32_t)-32768, (int32_t)32767));
+            }
+            if (fwrite(out.data(), sizeof(int16_t), kChunkSamples, stdout)
+                    < kChunkSamples)
+                break;
+        }
+        fflush(stdout);
+    }
+
     return 0;
 }
