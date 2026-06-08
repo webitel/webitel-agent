@@ -1,7 +1,8 @@
 // wasapi_capture: captures system audio (loopback) + microphone via WASAPI,
-// mixes them, and writes s16le PCM to stdout.
-// Usage: wasapi_capture.exe
-// Output: 4-byte LE sample-rate header, then s16le stereo PCM at device rate
+// mixes them, and writes s16le PCM to stdout (default) or a named pipe (-o flag).
+// Usage: wasapi_capture.exe [-o \\.\pipe\<name>]
+// Pipe mode: writes "WASAPI_RATE:<hz>\n" to stderr, then PCM to the named pipe.
+// Stdout mode: writes 4-byte LE sample-rate header, then s16le stereo PCM.
 
 #define NOMINMAX
 #include <windows.h>
@@ -251,23 +252,66 @@ done:
 
 // -- Main --------------------------------------------------------------------
 
-int main() {
+int main(int argc, char* argv[]) {
     _setmode(_fileno(stdout), _O_BINARY);
+
+    // Parse optional -o <pipe_name> for named pipe output mode.
+    const char* pipeOutput = nullptr;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (strcmp(argv[i], "-o") == 0) {
+            pipeOutput = argv[i + 1];
+            break;
+        }
+    }
 
     g_sampleRate = queryLoopbackSampleRate();
 
-    uint32_t rateLE = g_sampleRate;
-    fwrite(&rateLE, sizeof(rateLE), 1, stdout);
-    fflush(stdout);
+    HANDLE hPipe = INVALID_HANDLE_VALUE;
 
-    // Dart signals graceful shutdown by closing our stdin pipe.
+    if (pipeOutput != nullptr) {
+        hPipe = CreateNamedPipeA(
+            pipeOutput,
+            PIPE_ACCESS_OUTBOUND,
+            PIPE_TYPE_BYTE | PIPE_WAIT,
+            1,      // max instances
+            65536,  // output buffer size
+            0, 0,   // input buffer size, default timeout
+            nullptr
+        );
+        if (hPipe == INVALID_HANDLE_VALUE) return 1;
+        // Pipe exists — signal Dart with the sample rate so it can start FFmpeg.
+        fprintf(stderr, "WASAPI_RATE:%u\n", g_sampleRate);
+        fflush(stderr);
+    } else {
+        // Stdout mode: backward-compatible 4-byte LE header for capturer.dart.
+        uint32_t rateLE = g_sampleRate;
+        fwrite(&rateLE, sizeof(rateLE), 1, stdout);
+        fflush(stdout);
+    }
+
+    // Graceful shutdown: Dart closes our stdin pipe on stop.
     std::thread([] {
         while (std::getchar() != EOF) {}
         g_running = false;
     }).detach();
 
+    // Start WASAPI capture threads before waiting for FFmpeg to connect so
+    // that WASAPI is already warming up (QPC timestamps accumulating) during
+    // the ConnectNamedPipe wait.
     std::thread loopbackTh(captureThread, true);
     std::thread micTh(captureThread, false);
+
+    if (hPipe != INVALID_HANDLE_VALUE) {
+        // Block until FFmpeg opens the pipe. WASAPI threads run concurrently.
+        BOOL ok = ConnectNamedPipe(hPipe, nullptr);
+        if (!ok && GetLastError() != ERROR_PIPE_CONNECTED) {
+            g_running = false;
+            loopbackTh.join();
+            micTh.join();
+            CloseHandle(hPipe);
+            return 1;
+        }
+    }
 
     constexpr size_t kChunkSamples = kChunkFrames * kOutChannels;
     constexpr float  kLoopbackGain = 0.15f;
@@ -311,7 +355,19 @@ int main() {
         }
     }
 
-    bool stdoutClosed = false;
+    // Writes kChunkSamples s16le samples to the active output (pipe or stdout).
+    auto writeOutput = [&](const int16_t* data, size_t samples) -> bool {
+        if (hPipe != INVALID_HANDLE_VALUE) {
+            DWORD written = 0;
+            return WriteFile(hPipe, data,
+                             static_cast<DWORD>(samples * sizeof(int16_t)),
+                             &written, nullptr)
+                   && written == static_cast<DWORD>(samples * sizeof(int16_t));
+        }
+        return fwrite(data, sizeof(int16_t), samples, stdout) == samples;
+    };
+
+    bool outputClosed = false;
     while (g_running) {
         {
             std::lock_guard<std::mutex> lk(g_loopback.mtx);
@@ -338,9 +394,8 @@ int main() {
                 std::clamp(mixed, -32768.0f, 32767.0f));
         }
 
-        if (fwrite(out.data(), sizeof(int16_t), kChunkSamples, stdout)
-                < kChunkSamples) {
-            stdoutClosed = true;
+        if (!writeOutput(out.data(), kChunkSamples)) {
+            outputClosed = true;
             break;
         }
     }
@@ -349,7 +404,7 @@ int main() {
     loopbackTh.join();
     micTh.join();
 
-    if (!stdoutClosed) {
+    if (!outputClosed) {
         std::fill(mic.begin(), mic.end(), 0);
         while (lbDelay.size() >= kChunkSamples) {
             for (size_t i = 0; i < kChunkSamples; i++) {
@@ -361,11 +416,14 @@ int main() {
                 out[i] = static_cast<int16_t>(
                     std::clamp(s, -32768.0f, 32767.0f));
             }
-            if (fwrite(out.data(), sizeof(int16_t), kChunkSamples, stdout)
-                    < kChunkSamples)
-                break;
+            if (!writeOutput(out.data(), kChunkSamples)) break;
         }
-        fflush(stdout);
+        if (hPipe == INVALID_HANDLE_VALUE) fflush(stdout);
+    }
+
+    if (hPipe != INVALID_HANDLE_VALUE) {
+        DisconnectNamedPipe(hPipe);
+        CloseHandle(hPipe);
     }
 
     return 0;

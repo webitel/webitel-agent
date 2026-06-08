@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:webitel_desk_track/config/service.dart';
 import 'package:webitel_desk_track/core/storage/interface.dart';
 import 'package:webitel_desk_track/service/common/recorder/recorder_interface.dart';
@@ -12,7 +13,10 @@ class RecorderFactory {
   RecorderI create({required String id, required String token}) {
     final config = AppConfig.instance;
 
-    if (config.videoSaveLocally) {
+    // On Windows, always record locally (audio+video in one FFmpeg process)
+    // for guaranteed A/V sync. StreamRecorder uses WebRTC DataChannel for
+    // audio which the server timestamps on receipt, causing drift.
+    if (Platform.isWindows || config.videoSaveLocally) {
       return LocalVideoRecorder(
         callId: id,
         agentToken: token,
