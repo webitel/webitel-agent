@@ -12,13 +12,46 @@ String get _wasapiCapturePath {
 }
 
 class WindowsRecorder implements PlatformRecorder {
+  Process? _videoProcess;
   Process? _captureProcess;
-  Process? _ffmpegProcess;
+  Process? _audioProcess;
+
+  String? _filePath;
+  String? _videoPath;
+  String? _audioPath;
 
   @override
   Future<void> start(String filePath) async {
     final ffmpegPath = await FFmpegManager.instance.path;
 
+    _filePath = filePath;
+    _videoPath = '${filePath}_v.mp4';
+    _audioPath = '${filePath}_a.aac';
+
+    // Video: gdigrab → temp file. Stdin stays free for 'q' stop signal.
+    _videoProcess = await Process.start(
+      ffmpegPath,
+      [
+        '-f', 'gdigrab',
+        '-framerate', '15',
+        '-i', 'desktop',
+        '-vf', 'scale=1280:720',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-pix_fmt', 'yuv420p',
+        '-b:v', '5M',
+        '-an',
+        '-y',
+        _videoPath!,
+      ],
+      runInShell: false,
+      workingDirectory: p.dirname(ffmpegPath),
+    );
+    _videoProcess!.stderr
+        .transform(const SystemEncoding().decoder)
+        .listen(logger.info);
+
+    // Audio: wasapi_capture → FFmpeg (PCM→AAC) → temp file.
     final captureProcess = await Process.start(
       _wasapiCapturePath,
       [],
@@ -30,10 +63,9 @@ class WindowsRecorder implements PlatformRecorder {
         .transform(const SystemEncoding().decoder)
         .listen((l) => logger.debug('[WasapiCapture/rec] $l'));
 
-    // wasapi_capture writes a 4-byte LE uint32 sample rate before any PCM.
     final headerBuf = <int>[];
     bool headerRead = false;
-    final ffmpegReady = Completer<Process>();
+    final audioReady = Completer<Process>();
 
     captureProcess.stdout.listen(
       (chunk) async {
@@ -48,60 +80,39 @@ class WindowsRecorder implements PlatformRecorder {
               (headerBuf[3] << 24);
           final remainder = Uint8List.fromList(headerBuf.sublist(4));
 
-          final ffmpeg = await Process.start(
+          final audioProcess = await Process.start(
             ffmpegPath,
             [
-              // Video first — gdigrab wall-clock PTS is the reference timeline.
-              // Audio pipe PTS (sample-count based) is rebased to wall-clock via
-              // -use_wallclock_as_timestamps so both inputs share the same clock.
-              '-f', 'gdigrab',
-              '-framerate', '15',
-              '-rtbufsize', '100M',
-              '-thread_queue_size', '4096',
-              '-i', 'desktop',
-              '-use_wallclock_as_timestamps', '1',
               '-f', 's16le',
               '-ar', '$sampleRate',
               '-ac', '2',
-              '-thread_queue_size', '4096',
               '-i', 'pipe:0',
-              // Encoding
-              '-vf', 'scale=1280:720',
-              '-c:v', 'libx264',
-              '-preset', 'ultrafast',
-              '-pix_fmt', 'yuv420p',
-              '-b:v', '5M',
               '-c:a', 'aac',
               '-b:a', '128k',
-              '-async', '1',
-              // Stop when audio input closes (wasapi_capture exits on shutdown)
-              '-shortest',
-              '-movflags', '+faststart',
               '-y',
-              filePath,
+              _audioPath!,
             ],
             runInShell: false,
             workingDirectory: p.dirname(ffmpegPath),
           );
-          _ffmpegProcess = ffmpeg;
+          _audioProcess = audioProcess;
 
-          ffmpeg.stderr
+          audioProcess.stderr
               .transform(const SystemEncoding().decoder)
               .listen(logger.info);
 
-          ffmpegReady.complete(ffmpeg);
-
-          if (remainder.isNotEmpty) ffmpeg.stdin.add(remainder);
+          audioReady.complete(audioProcess);
+          if (remainder.isNotEmpty) audioProcess.stdin.add(remainder);
           return;
         }
 
-        final ffmpeg = await ffmpegReady.future;
-        ffmpeg.stdin.add(chunk);
+        final audioProcess = await audioReady.future;
+        audioProcess.stdin.add(chunk);
       },
       onDone: () async {
-        if (ffmpegReady.isCompleted) {
-          final ffmpeg = await ffmpegReady.future;
-          await ffmpeg.stdin.close().catchError((_) {});
+        if (audioReady.isCompleted) {
+          final audioProcess = await audioReady.future;
+          await audioProcess.stdin.close().catchError((_) {});
         }
       },
       onError: (e) => logger.error('[WindowsRecorder] PCM pipe error', e),
@@ -114,14 +125,29 @@ class WindowsRecorder implements PlatformRecorder {
   Future<void> stop() async {
     logger.info('[WindowsRecorder] Stopping recording');
 
+    final video = _videoProcess;
     final capture = _captureProcess;
-    final ffmpeg = _ffmpegProcess;
+    final audio = _audioProcess;
+    _videoProcess = null;
     _captureProcess = null;
-    _ffmpegProcess = null;
+    _audioProcess = null;
 
-    // Closing wasapi_capture stdin signals graceful exit; it flushes and
-    // closes stdout, which closes FFmpeg's audio pipe, triggering -shortest
-    // to finalize the MP4.
+    // Stop video gracefully via FFmpeg's 'q' command.
+    if (video != null) {
+      video.stdin.writeln('q');
+      await video.stdin.flush().catchError((_) {});
+      await video.stdin.close().catchError((_) {});
+      await video.exitCode.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          video.kill();
+          return -1;
+        },
+      );
+    }
+
+    // Stop audio chain: closing wasapi_capture stdin signals it to exit,
+    // which closes its stdout, which closes the audio FFmpeg's stdin pipe.
     if (capture != null) {
       await capture.stdin.close().catchError((_) {});
       await capture.exitCode.timeout(
@@ -132,15 +158,56 @@ class WindowsRecorder implements PlatformRecorder {
         },
       );
     }
-
-    if (ffmpeg != null) {
-      await ffmpeg.exitCode.timeout(
+    if (audio != null) {
+      await audio.exitCode.timeout(
         const Duration(seconds: 5),
         onTimeout: () {
-          ffmpeg.kill();
+          audio.kill();
           return -1;
         },
       );
     }
+
+    await _mux();
+  }
+
+  Future<void> _mux() async {
+    final videoPath = _videoPath;
+    final audioPath = _audioPath;
+    final filePath = _filePath;
+    if (videoPath == null || audioPath == null || filePath == null) return;
+
+    final ffmpegPath = await FFmpegManager.instance.path;
+
+    logger.info('[WindowsRecorder] Muxing $videoPath + $audioPath → $filePath');
+
+    final mux = await Process.start(
+      ffmpegPath,
+      [
+        '-i', videoPath,
+        '-i', audioPath,
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        '-y',
+        filePath,
+      ],
+      runInShell: false,
+      workingDirectory: p.dirname(ffmpegPath),
+    );
+
+    mux.stderr
+        .transform(const SystemEncoding().decoder)
+        .listen(logger.info);
+
+    await mux.exitCode.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () {
+        mux.kill();
+        return -1;
+      },
+    );
+
+    await File(videoPath).delete().catchError((_) => File(videoPath));
+    await File(audioPath).delete().catchError((_) => File(audioPath));
   }
 }

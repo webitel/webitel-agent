@@ -282,22 +282,33 @@ int main() {
     // The WASAPI loopback endpoint captures from the render pipeline ahead of
     // the mic ADC, so lbQpc < micQpc; the difference is the real hardware
     // offset and is typically a few milliseconds.
-    while (g_running) {
-        const UINT64 lbQpc  = g_loopback.getFirstQpc();
-        const UINT64 micQpc = g_mic.getFirstQpc();
-        if (lbQpc != 0 && micQpc != 0) {
-            const INT64 diff100ns = (INT64)lbQpc - (INT64)micQpc;
-            if (diff100ns < 0) {
-                // loopback is ahead; delay it by the measured gap
-                constexpr INT64 kMaxDelay100ns = 5000000LL; // 500 ms safety cap
-                const INT64 clamped = std::min(-diff100ns, kMaxDelay100ns);
-                const size_t delaySamples = static_cast<size_t>(
-                    clamped * (INT64)g_sampleRate * kOutChannels / 10000000LL);
-                lbDelay.assign(delaySamples, 0);
+    // Some drivers never fill pu64QPCPosition (returns 0); cap the wait at
+    // 500 ms so we don't hang and simply proceed with no delay in that case.
+    {
+        LARGE_INTEGER qpcWaitStart, qpcFreq;
+        QueryPerformanceFrequency(&qpcFreq);
+        QueryPerformanceCounter(&qpcWaitStart);
+
+        while (g_running) {
+            const UINT64 lbQpc  = g_loopback.getFirstQpc();
+            const UINT64 micQpc = g_mic.getFirstQpc();
+            if (lbQpc != 0 && micQpc != 0) {
+                const INT64 diff100ns = (INT64)lbQpc - (INT64)micQpc;
+                if (diff100ns < 0) {
+                    constexpr INT64 kMaxDelay100ns = 5000000LL; // 500 ms safety cap
+                    const INT64 clamped = std::min(-diff100ns, kMaxDelay100ns);
+                    const size_t delaySamples = static_cast<size_t>(
+                        clamped * (INT64)g_sampleRate * kOutChannels / 10000000LL);
+                    lbDelay.assign(delaySamples, 0);
+                }
+                break;
             }
-            break;
+            LARGE_INTEGER now;
+            QueryPerformanceCounter(&now);
+            if ((now.QuadPart - qpcWaitStart.QuadPart) * 1000LL / qpcFreq.QuadPart >= 500)
+                break;
+            Sleep(5);
         }
-        Sleep(5);
     }
 
     bool stdoutClosed = false;
