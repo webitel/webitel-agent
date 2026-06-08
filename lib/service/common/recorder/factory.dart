@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:webitel_desk_track/config/service.dart';
 import 'package:webitel_desk_track/core/storage/interface.dart';
 import 'package:webitel_desk_track/service/common/recorder/recorder_interface.dart';
@@ -9,11 +10,13 @@ class RecorderFactory {
 
   RecorderFactory(this._storage);
 
-  /// Creates a concrete recorder instance based on app configuration.
   RecorderI create({required String id, required String token}) {
     final config = AppConfig.instance;
 
-    if (config.videoSaveLocally) {
+    // On Windows, FFmpeg muxes audio+video into one container — A/V sync is
+    // guaranteed by the muxer. WebRTC DataChannel has no RTP timestamps so
+    // the server cannot reliably align audio with video frames.
+    if (Platform.isWindows || config.videoSaveLocally) {
       return LocalVideoRecorder(
         callId: id,
         agentToken: token,
