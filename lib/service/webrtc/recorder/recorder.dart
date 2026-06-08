@@ -80,10 +80,7 @@ class StreamRecorder implements RecorderI {
       };
 
       if (Platform.isWindows) {
-        streams = await captureAllDesktopScreensWindows(
-          FFmpegMode.recording,
-          currentPc,
-        );
+        streams = await captureAllDesktopScreensWindows(currentPc);
       } else {
         final stream = await captureDesktopScreen();
         if (stream != null) streams = [stream];
@@ -160,7 +157,6 @@ class StreamRecorder implements RecorderI {
 
   Future<void> _cleanupInternal() async {
     _maxDurationTimer?.cancel();
-    await stopStereoAudioFFmpeg(FFmpegMode.recording);
 
     if (_sessionID != null) {
       try {
