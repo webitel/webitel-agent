@@ -31,18 +31,23 @@ UINT32 g_sampleRate = 48000;
 
 std::atomic<bool> g_running{true};
 
-// Thread-safe PCM queue (interleaved stereo s16le)
+// Thread-safe PCM queue (interleaved stereo s16le).
+// firstQpc holds the QPC timestamp (100-ns units) of the very first packet
+// received by this queue; used to align loopback with microphone timing.
 struct AudioQueue {
     std::mutex mtx;
     std::deque<int16_t> buf;
+    UINT64 firstQpc{0};
 
-    void push(const int16_t* data, size_t samples) {
+    void push(const int16_t* data, size_t samples, UINT64 qpc) {
         std::lock_guard<std::mutex> lk(mtx);
+        if (firstQpc == 0) firstQpc = qpc;
         buf.insert(buf.end(), data, data + samples);
     }
 
-    void pushSilence(size_t samples) {
+    void pushSilence(size_t samples, UINT64 qpc) {
         std::lock_guard<std::mutex> lk(mtx);
+        if (firstQpc == 0) firstQpc = qpc;
         buf.insert(buf.end(), samples, 0);
     }
 
@@ -54,6 +59,11 @@ struct AudioQueue {
             buf.pop_front();
         }
         return true;
+    }
+
+    UINT64 getFirstQpc() {
+        std::lock_guard<std::mutex> lk(mtx);
+        return firstQpc;
     }
 };
 
@@ -215,16 +225,17 @@ static void captureThread(bool loopback) {
             BYTE*  data      = nullptr;
             UINT32 numFrames = 0;
             DWORD  flags     = 0;
+            UINT64 qpcPos    = 0;
 
             if (FAILED(capture->GetBuffer(&data, &numFrames, &flags,
-                                          nullptr, nullptr)))
+                                          nullptr, &qpcPos)))
                 break;
 
             if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
-                queue.pushSilence(numFrames * kOutChannels);
+                queue.pushSilence(numFrames * kOutChannels, qpcPos);
             } else if (numFrames > 0) {
                 convertToS16Stereo(data, numFrames, wf, converted);
-                queue.push(converted.data(), converted.size());
+                queue.push(converted.data(), converted.size(), qpcPos);
             }
 
             capture->ReleaseBuffer(numFrames);
@@ -258,19 +269,36 @@ int main() {
     std::thread loopbackTh(captureThread, true);
     std::thread micTh(captureThread, false);
 
-    constexpr size_t   kChunkSamples   = kChunkFrames * kOutChannels;
-    constexpr float    kLoopbackGain   = 0.15f;
-    constexpr uint32_t kLoopbackDelayMs = 5000;
+    constexpr size_t kChunkSamples = kChunkFrames * kOutChannels;
+    constexpr float  kLoopbackGain = 0.15f;
 
     std::vector<int16_t> lb(kChunkSamples), mic(kChunkSamples),
                          out(kChunkSamples);
 
-    // Pre-fill with silence so loopback is held back by kLoopbackDelayMs.
-    // This compensates for the Windows audio engine render buffer that causes
-    // loopback data to arrive earlier than the corresponding mic signal.
-    const size_t lbDelaySamples =
-        static_cast<size_t>(kLoopbackDelayMs) * g_sampleRate / 1000 * kOutChannels;
-    std::deque<int16_t> lbDelay(lbDelaySamples, 0);
+    std::deque<int16_t> lbDelay;
+
+    // Wait until both capture threads report their first QPC timestamp, then
+    // pre-fill lbDelay with the exact silence that aligns loopback to mic.
+    // The WASAPI loopback endpoint captures from the render pipeline ahead of
+    // the mic ADC, so lbQpc < micQpc; the difference is the real hardware
+    // offset and is typically a few milliseconds.
+    while (g_running) {
+        const UINT64 lbQpc  = g_loopback.getFirstQpc();
+        const UINT64 micQpc = g_mic.getFirstQpc();
+        if (lbQpc != 0 && micQpc != 0) {
+            const INT64 diff100ns = (INT64)lbQpc - (INT64)micQpc;
+            if (diff100ns < 0) {
+                // loopback is ahead; delay it by the measured gap
+                constexpr INT64 kMaxDelay100ns = 5000000LL; // 500 ms safety cap
+                const INT64 clamped = std::min(-diff100ns, kMaxDelay100ns);
+                const size_t delaySamples = static_cast<size_t>(
+                    clamped * (INT64)g_sampleRate * kOutChannels / 10000000LL);
+                lbDelay.assign(delaySamples, 0);
+            }
+            break;
+        }
+        Sleep(5);
+    }
 
     bool stdoutClosed = false;
     while (g_running) {
@@ -310,8 +338,6 @@ int main() {
     loopbackTh.join();
     micTh.join();
 
-    // Flush the remaining loopback delay buffer mixed with silence.
-    // Skipped if stdout was already closed (FFmpeg died before us).
     if (!stdoutClosed) {
         std::fill(mic.begin(), mic.end(), 0);
         while (lbDelay.size() >= kChunkSamples) {
