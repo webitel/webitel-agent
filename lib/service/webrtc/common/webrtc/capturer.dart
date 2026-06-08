@@ -37,9 +37,21 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
 
       streams.add(screenStream);
       logger.info('[Capturer] Capture started for monitor ${source.name}');
+      logger.info(
+        '[Capturer] Loopback audio tracks: ${screenStream.getAudioTracks().length}',
+      );
+    }
 
-      final audioTracks = screenStream.getAudioTracks();
-      logger.info('[Capturer] Loopback audio tracks: ${audioTracks.length}');
+    // Microphone as a separate WebRTC audio track.
+    try {
+      final micStream = await navigator.mediaDevices.getUserMedia({
+        'audio': true,
+        'video': false,
+      });
+      streams.add(micStream);
+      logger.info('[Capturer] Mic audio tracks: ${micStream.getAudioTracks().length}');
+    } catch (e) {
+      logger.warn('[Capturer] Mic capture failed (no mic?): $e');
     }
 
     return streams;
