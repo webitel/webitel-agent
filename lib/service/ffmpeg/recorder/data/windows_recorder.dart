@@ -51,17 +51,20 @@ class WindowsRecorder implements PlatformRecorder {
           final ffmpeg = await Process.start(
             ffmpegPath,
             [
-              // Audio: PCM from wasapi_capture via stdin
+              // Video first — gdigrab wall-clock PTS is the reference timeline.
+              // Audio pipe PTS (sample-count based) is rebased to wall-clock via
+              // -use_wallclock_as_timestamps so both inputs share the same clock.
+              '-f', 'gdigrab',
+              '-framerate', '15',
+              '-rtbufsize', '100M',
+              '-thread_queue_size', '4096',
+              '-i', 'desktop',
+              '-use_wallclock_as_timestamps', '1',
               '-f', 's16le',
               '-ar', '$sampleRate',
               '-ac', '2',
               '-thread_queue_size', '4096',
               '-i', 'pipe:0',
-              // Video: screen via gdigrab
-              '-f', 'gdigrab',
-              '-framerate', '15',
-              '-thread_queue_size', '4096',
-              '-i', 'desktop',
               // Encoding
               '-vf', 'scale=1280:720',
               '-c:v', 'libx264',
@@ -70,6 +73,7 @@ class WindowsRecorder implements PlatformRecorder {
               '-b:v', '5M',
               '-c:a', 'aac',
               '-b:a', '128k',
+              '-async', '1',
               // Stop when audio input closes (wasapi_capture exits on shutdown)
               '-shortest',
               '-movflags', '+faststart',
