@@ -14,7 +14,7 @@ class WindowsRecorder implements PlatformRecorder {
     _process = await Process.start(
       ffmpegPath,
       [
-        '-f', 'gdigrab', // Windows screen grabber
+        '-f', 'gdigrab',
         '-framerate', '15',
         '-i', 'desktop',
         '-vf', 'scale=1280:720',

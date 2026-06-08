@@ -56,9 +56,6 @@ class ScreenStreamer {
       '[ScreenStreamer] Initiating screen share for parent_id=$parentId',
     );
 
-    // [CLEANUP] Ensure no stale streaming processes are running to avoid device conflicts
-    await stopStereoAudioFFmpeg(FFmpegMode.streaming);
-
     // Initialize PeerConnection with ICE configuration (STUN/TURN)
     final pc = await createPeerConnection({
       'iceServers': AppConfig.instance.webrtcIceServers,
@@ -74,10 +71,7 @@ class ScreenStreamer {
         logger.debug(
           '[ScreenStreamer] Platform: Windows. Starting multi-screen FFmpeg capture.',
         );
-        localStreams = await captureAllDesktopScreensWindows(
-          FFmpegMode.streaming,
-          pc,
-        );
+        localStreams = await captureAllDesktopScreensWindows(pc);
       } else {
         logger.debug(
           '[ScreenStreamer] Platform: macOS/Linux. Using standard media devices.',
@@ -233,11 +227,8 @@ class ScreenStreamer {
     onClose();
   }
 
-  /// Internal resource teardown: FFmpeg, MediaTracks, and PeerConnection
+  /// Internal resource teardown: MediaTracks and PeerConnection
   void _cleanupInternal() {
-    // 1. Kill the audio mixing/streaming process
-    stopStereoAudioFFmpeg(FFmpegMode.streaming);
-
     try {
       // 2. Stop and dispose all active media tracks to release camera/mic/screen handles
       if (localStreams != null) {

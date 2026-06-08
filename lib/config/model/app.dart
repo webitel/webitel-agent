@@ -8,7 +8,6 @@ class AppConfigModel {
   final int videoWidth;
   final int videoHeight;
   final int framerate;
-  final bool videoSaveLocally;
   final int maxCallRecordDuration;
 
   final TelemetryConfig telemetry;
@@ -27,7 +26,6 @@ class AppConfigModel {
     required this.videoWidth,
     required this.videoHeight,
     required this.framerate,
-    required this.videoSaveLocally,
     required this.maxCallRecordDuration,
     required this.telemetry,
     required this.webrtcSdpUrl,
@@ -37,7 +35,6 @@ class AppConfigModel {
     required this.microphoneKeywords,
   });
 
-  /// Creates a safe fallback configuration
   factory AppConfigModel.empty() {
     return AppConfigModel(
       baseUrl: '',
@@ -46,7 +43,6 @@ class AppConfigModel {
       videoWidth: 1280,
       videoHeight: 720,
       framerate: 30,
-      videoSaveLocally: false,
       maxCallRecordDuration: 3600,
       telemetry: TelemetryConfig.fromJson({}),
       webrtcSdpUrl: '',
@@ -57,7 +53,6 @@ class AppConfigModel {
     );
   }
 
-  /// Main mapping logic from JSON to Model
   factory AppConfigModel.fromJson(Map<String, dynamic> json) {
     final server = json['server'] as Map<String, dynamic>? ?? {};
     final video = json['video'] as Map<String, dynamic>? ?? {};
@@ -66,7 +61,6 @@ class AppConfigModel {
 
     final baseUrl = server['baseUrl']?.toString() ?? '';
 
-    // Internal helper for URL validation and assembly
     String buildUrl(String path, {bool isWs = false}) {
       if (baseUrl.isEmpty) return '';
       if (path.startsWith('http') || path.startsWith('ws')) return path;
@@ -92,7 +86,6 @@ class AppConfigModel {
       videoWidth: _toInt(video['width'], 1280),
       videoHeight: _toInt(video['height'], 720),
       framerate: _toInt(video['framerate'], 30),
-      videoSaveLocally: video['saveLocally'] == true,
       maxCallRecordDuration: _toInt(video['maxCallRecordDuration'], 3600),
       telemetry: TelemetryConfig.fromJson(json['telemetry'] ?? {}),
       webrtcSdpUrl: buildUrl('/api/webrtc/video'),
