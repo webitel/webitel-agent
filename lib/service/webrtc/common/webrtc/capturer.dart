@@ -23,7 +23,7 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
       final screenStream = await navigator.mediaDevices.getDisplayMedia({
         'video': {
           'mandatory': {
-            'frameRate': 15,
+            'frameRate': 15.0,
           },
         },
         'audio': true,
@@ -71,7 +71,7 @@ Future<MediaStream?> captureDesktopScreen() async {
     final screenStream = await navigator.mediaDevices.getDisplayMedia({
       'video': {
         'deviceId': source.id,
-        'mandatory': {'frameRate': 15},
+        'mandatory': {'frameRate': 15.0},
       },
       'audio': true,
     });
