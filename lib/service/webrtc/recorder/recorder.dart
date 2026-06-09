@@ -47,6 +47,10 @@ class StreamRecorder implements RecorderI {
       pc = await createPeerConnectionWithConfig(iceServers);
       final currentPc = pc!;
 
+      currentPc.onIceGatheringState = (RTCIceGatheringState state) {
+        logger.debug('[StreamRecorder] ICE Gathering: ${state.name}');
+      };
+
       currentPc.onIceConnectionState = (RTCIceConnectionState state) {
         logger.debug('[StreamRecorder] ICE Connection State: ${state.name}');
 
@@ -90,10 +94,13 @@ class StreamRecorder implements RecorderI {
 
       for (final stream in streams) {
         for (final track in stream.getTracks()) {
+          logger.debug('[StreamRecorder] Adding track: kind=${track.kind} id=${track.id} enabled=${track.enabled}');
           final sender = await currentPc.addTrack(track, stream);
           if (track.kind == 'video') await _configureVideoEncoding(sender);
         }
       }
+
+      logger.debug('[StreamRecorder] Streams: ${streams.length}, total tracks: ${streams.fold(0, (n, s) => n + s.getTracks().length)}');
 
       final offer = await currentPc.createOffer();
       if (_isStopping) return;
@@ -110,6 +117,8 @@ class StreamRecorder implements RecorderI {
 
       final localDesc = await currentPc.getLocalDescription();
       if (localDesc == null) throw Exception('SDP generation failed');
+
+      _logSdpAudioLines(localDesc.sdp ?? '', 'offer');
 
       final response = await sendSDPToServer(
         url: sdpResolverUrl,
@@ -179,6 +188,18 @@ class StreamRecorder implements RecorderI {
     if (pc != null) {
       await pc!.close();
       pc = null;
+    }
+  }
+
+  void _logSdpAudioLines(String sdp, String label) {
+    final lines = sdp.split('\n').where((l) {
+      if (l.startsWith('m=audio')) return true;
+      if (l.startsWith('a=rtpmap')) return true;
+      if (l.startsWith('a=fmtp')) return true;
+      return false;
+    });
+    for (final l in lines) {
+      logger.debug('[StreamRecorder] SDP $label: ${l.trim()}');
     }
   }
 
