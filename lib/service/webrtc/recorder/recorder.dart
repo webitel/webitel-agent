@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:webitel_desk_track/config/service.dart';
 import 'package:webitel_desk_track/core/logger/logger.dart';
 import 'package:webitel_desk_track/core/storage/interface.dart';
 import 'package:webitel_desk_track/service/webrtc/common/webrtc/capturer.dart';
@@ -149,7 +148,7 @@ class StreamRecorder implements RecorderI {
     params.encodings![0]
       ..maxBitrate = 2500000
       ..minBitrate = 500000
-      ..maxFramerate = AppConfig.instance.framerate;
+      ..maxFramerate = 15;
 
     params.degradationPreference = RTCDegradationPreference.MAINTAIN_RESOLUTION;
     await sender.setParameters(params);

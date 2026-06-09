@@ -1,15 +1,10 @@
 import 'dart:io';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:webitel_desk_track/config/service.dart';
 import 'package:webitel_desk_track/core/logger/logger.dart';
 
 Future<List<MediaStream>> captureAllDesktopScreensWindows(
   RTCPeerConnection pc,
 ) async {
-  final config = AppConfig.instance;
-  final int width = config.videoWidth;
-  final int height = config.videoHeight;
-
   final List<MediaStream> streams = [];
 
   try {
@@ -27,10 +22,9 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
     for (final source in sources) {
       final screenStream = await navigator.mediaDevices.getDisplayMedia({
         'video': {
-          'mandatory': {'maxWidth': width, 'maxHeight': height},
-          'optional': [
-            {'scaleResolutionDownBy': 1.0},
-          ],
+          'mandatory': {
+            'frameRate': 15,
+          },
         },
         'audio': true,
       });
@@ -66,10 +60,6 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
 }
 
 Future<MediaStream?> captureDesktopScreen() async {
-  final config = AppConfig.instance;
-  final int width = config.videoWidth;
-  final int height = config.videoHeight;
-
   try {
     logger.info('[Capturer] Starting screen capture');
 
@@ -81,7 +71,7 @@ Future<MediaStream?> captureDesktopScreen() async {
     final screenStream = await navigator.mediaDevices.getDisplayMedia({
       'video': {
         'deviceId': source.id,
-        'mandatory': {'maxWidth': width, 'maxHeight': height},
+        'mandatory': {'frameRate': 15},
       },
       'audio': true,
     });

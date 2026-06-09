@@ -11,9 +11,9 @@ A cross-platform desktop application for Webitel call-center agents. It monitors
 | Feature | Description |
 | --- | --- |
 | **Periodic Screenshots** | Automatic screen captures sent to the Webitel server on a configurable interval |
-| **Screen Recording** | Records the agent's screen in response to WebSocket events from the Webitel server |
+| **Screen Recording** | Records the agent's screen + audio in response to WebSocket events from the Webitel server |
 | **Live Screen Streaming** | Real-time screen share to supervisors via WebRTC (offer/answer signaling over WebSocket) |
-| **Audio Capture** | Captures system audio (Stereo Mix) and microphone via FFmpeg DirectShow on Windows |
+| **Audio Capture** | System audio (loopback) and microphone captured as WebRTC tracks via Windows Application Loopback API |
 | **OpenTelemetry** | Structured log export to an OTel collector (logs, traces) |
 | **WebRTC Metrics** | Periodic performance logging: FPS, bitrate, RTT, packet loss, ICE state |
 | **Tray Menu** | Manual configuration upload without restarting the application |
@@ -27,9 +27,8 @@ WebSocket (lib/ws/)
   └── NotificationHandler
         ├── ScreenStreamer      — real-time WebRTC screen share to supervisor
         ├── RecordingManager
-        │     ├── WebRTC Recorder  — records via flutter_webrtc
-        │     └── FFmpeg Recorder  — records via bundled FFmpeg binary
-        │           └── Capturer   — enumerates DirectShow devices, probes and opens audio
+        │     └── StreamRecorder  — records screen + audio via WebRTC to server
+        │           └── Capturer  — getDisplayMedia (video + loopback) + getUserMedia (mic)
         └── ScreenshotService  — periodic and on-demand screenshots
 ```
 
@@ -43,9 +42,24 @@ Key source paths:
 | WebRTC recording | `lib/service/webrtc/recorder/recorder.dart` |
 | Audio + screen capture | `lib/service/webrtc/common/webrtc/capturer.dart` |
 | FFmpeg binary lifecycle | `lib/service/ffmpeg/manager/manager.dart` |
-| Local file recording | `lib/service/ffmpeg/recorder/` |
 | Screenshots | `lib/service/screenshot/` |
 | App config | `lib/config/` |
+
+---
+
+## Audio & Video Capture (Windows)
+
+All capture is done via WebRTC APIs — no FFmpeg for recording:
+
+- **Screen video** — `getDisplayMedia` at **15 fps** (hardcoded)
+- **Loopback audio** — `getDisplayMedia({ audio: true })` via `ApplicationLoopbackCapturer` (Windows 10 20H2+)
+- **Microphone** — `getUserMedia({ audio: true })` as a separate RTP track
+
+Both audio tracks and the video track are sent as RTP streams to the recording server via `StreamRecorder`.
+
+> **Important:** The Windows audio output device must be set to **48000 Hz**.
+> Go to Sound Settings → Playback device → Properties → Advanced → Default Format → select `48000 Hz`.
+> At 44100 Hz, `ApplicationLoopbackCapturer` introduces ~8.8% clock drift (audio runs ahead of video).
 
 ---
 
@@ -69,14 +83,14 @@ Alternatively, use the **Upload configuration** option in the system tray menu t
     "baseUrl": "https://your-host.webitel.com"
   },
   "telemetry": {
-    "level": "debug",
+    "level": "info",
     "console": true,
     "file": {
       "enabled": true,
       "path": "logs/app.log"
     },
     "opentelemetry": {
-      "enabled": true,
+      "enabled": false,
       "endpoint": "http://192.168.1.10:4317",
       "serviceName": "webitel-desk-track",
       "exportLogs": true
@@ -84,76 +98,30 @@ Alternatively, use the **Upload configuration** option in the system tray menu t
   },
   "webrtc": {
     "iceServers": [],
-    "iceTransportPolicy": "all",
-    "enableMetrics": true
+    "iceTransportPolicy": "all"
   },
   "video": {
-    "width": 1920,
-    "height": 1080,
-    "saveLocally": false,
-    "maxCallRecordDuration": 600
-  },
-  "devices": {
-    "stereoMixKeywords": ["Stereo Mix"],
-    "microphoneKeywords": ["Microphone"]
+    "maxCallRecordDuration": 3600
   }
 }
 ```
 
 ### Configuration Reference
 
-| Key | Type | Description |
-| --- | --- | --- |
-| `server.baseUrl` | string | Base URL of the Webitel server |
-| `telemetry.level` | string | Minimum log level: `debug`, `info`, `error` |
-| `telemetry.console` | bool | Print logs to stdout |
-| `telemetry.file.enabled` | bool | Write logs to a file |
-| `telemetry.file.path` | string | Log file path (relative or absolute) |
-| `telemetry.opentelemetry.enabled` | bool | Enable OTel export |
-| `telemetry.opentelemetry.endpoint` | string | OTel collector address (HTTP/gRPC) |
-| `telemetry.opentelemetry.serviceName` | string | Service name reported to the collector |
-| `telemetry.opentelemetry.exportLogs` | bool | Include logs in OTel export |
-| `webrtc.iceServers` | array | STUN/TURN server list for WebRTC |
-| `webrtc.iceTransportPolicy` | string | `all` or `relay` |
-| `webrtc.enableMetrics` | bool | Log WebRTC performance metrics periodically (requires `level: debug`) |
-| `video.width` | int | Capture width in pixels |
-| `video.height` | int | Capture height in pixels |
-| `video.saveLocally` | bool | Save recorded video to disk |
-| `video.maxCallRecordDuration` | int | Maximum recording duration in seconds |
-| `devices.stereoMixKeywords` | array | Keywords used to identify the Stereo Mix device |
-| `devices.microphoneKeywords` | array | Keywords used to identify the microphone device |
-
----
-
-## Audio Capture (Windows)
-
-Audio is captured by FFmpeg using DirectShow (`-f dshow`). The app enumerates devices via `ffmpeg -list_devices true -f dshow -i dummy` and matches them by keyword against `stereoMixKeywords` and `microphoneKeywords`.
-
-Before starting a recording session, each matched device is probed with a short 0.1 s test recording. If Stereo Mix is disabled in Windows Sound settings it will appear in the device list but fail the probe — the app falls back to microphone-only audio and proceeds rather than failing.
-
----
-
-## WebRTC Metrics
-
-When `webrtc.enableMetrics: true` and `telemetry.level: debug`, the app logs a periodic performance snapshot for the active stream:
-
-```text
-[Metrics] FPS=12.0 res=1920x1080 frames(S/E)=12/12 encT(avg)=29ms/frame
-          key=1 targetBitrate=2083k ACTUAL_BITRATE=1579kbps
-          nack=0 pli=0 fir=0 RTT=4.2ms ICE=succeeded writable=true
-```
-
-| Field | Description |
-| --- | --- |
-| `FPS` | Frames sent per second over the network |
-| `res` | Captured screen resolution |
-| `frames(S/E)` | Sent vs. encoded frames — equal values indicate a healthy stream |
-| `encT(avg)` | Average CPU encode time per frame |
-| `ACTUAL_BITRATE` | Measured outgoing bitrate in the last reporting interval |
-| `targetBitrate` | Encoder's requested bitrate |
-| `nack/pli/fir` | Packet-loss recovery counters — zero is healthy |
-| `RTT` | Round-trip network latency |
-| `ICE` | ICE connection state — `succeeded` confirms an established path |
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `server.baseUrl` | string | — | Base URL of the Webitel server |
+| `telemetry.level` | string | `info` | Minimum log level: `debug`, `info`, `warn`, `error` |
+| `telemetry.console` | bool | `true` | Print logs to stdout |
+| `telemetry.file.enabled` | bool | `false` | Write logs to a file |
+| `telemetry.file.path` | string | — | Log file path (relative or absolute) |
+| `telemetry.opentelemetry.enabled` | bool | `false` | Enable OTel export |
+| `telemetry.opentelemetry.endpoint` | string | — | OTel collector address (HTTP/gRPC) |
+| `telemetry.opentelemetry.serviceName` | string | — | Service name reported to the collector |
+| `telemetry.opentelemetry.exportLogs` | bool | `true` | Include logs in OTel export |
+| `webrtc.iceServers` | array | `[]` | STUN/TURN server list for WebRTC |
+| `webrtc.iceTransportPolicy` | string | `all` | `all` or `relay` |
+| `video.maxCallRecordDuration` | int | `3600` | Maximum recording duration in seconds |
 
 ---
 
@@ -171,7 +139,7 @@ flutter build windows --release
 ./build_macos.sh
 ```
 
-FFmpeg binaries are bundled as Flutter assets:
+FFmpeg binaries are bundled as Flutter assets (used for screenshots only):
 
 | Platform | Asset path |
 | --- | --- |
@@ -190,4 +158,4 @@ flutter run -d windows
 flutter run -d macos
 ```
 
-Set `telemetry.level` to `debug` in `config.json` to enable verbose WebSocket and FFmpeg logging.
+Set `telemetry.level` to `debug` in `config.json` to enable verbose WebSocket and WebRTC logging.
