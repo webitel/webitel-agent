@@ -54,7 +54,6 @@ Key fields:
 ```json
 {
   "server": { "baseUrl": "https://your-server.com" },
-  "video": { "maxCallRecordDuration": 3600 },
   "webrtc": {
     "iceServers": [{ "urls": "stun:stun.l.google.com:19302" }],
     "iceTransportPolicy": "all"

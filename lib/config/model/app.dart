@@ -5,8 +5,6 @@ class AppConfigModel {
   final String loginUrl;
   final String webitelWsUrl;
 
-  final int maxCallRecordDuration;
-
   final TelemetryConfig telemetry;
 
   final String webrtcSdpUrl;
@@ -17,7 +15,6 @@ class AppConfigModel {
     required this.baseUrl,
     required this.loginUrl,
     required this.webitelWsUrl,
-    required this.maxCallRecordDuration,
     required this.telemetry,
     required this.webrtcSdpUrl,
     required this.webrtcIceServers,
@@ -29,7 +26,6 @@ class AppConfigModel {
       baseUrl: '',
       loginUrl: '',
       webitelWsUrl: '',
-      maxCallRecordDuration: 3600,
       telemetry: TelemetryConfig.fromJson({}),
       webrtcSdpUrl: '',
       webrtcIceServers: const [],
@@ -39,7 +35,6 @@ class AppConfigModel {
 
   factory AppConfigModel.fromJson(Map<String, dynamic> json) {
     final server = json['server'] as Map<String, dynamic>? ?? {};
-    final video = json['video'] as Map<String, dynamic>? ?? {};
     final webrtc = json['webrtc'] as Map<String, dynamic>? ?? {};
 
     final baseUrl = server['baseUrl']?.toString() ?? '';
@@ -66,7 +61,6 @@ class AppConfigModel {
         '/ws/websocket?application_name=desc_track',
         isWs: true,
       ),
-      maxCallRecordDuration: _toInt(video['maxCallRecordDuration'], 3600),
       telemetry: TelemetryConfig.fromJson(json['telemetry'] ?? {}),
       webrtcSdpUrl: buildUrl('/api/webrtc/video'),
       webrtcIceServers:
@@ -78,6 +72,4 @@ class AppConfigModel {
     );
   }
 
-  static int _toInt(dynamic v, int def) =>
-      int.tryParse(v?.toString() ?? '') ?? def;
 }

@@ -99,9 +99,6 @@ Alternatively, use the **Upload configuration** option in the system tray menu t
   "webrtc": {
     "iceServers": [],
     "iceTransportPolicy": "all"
-  },
-  "video": {
-    "maxCallRecordDuration": 3600
   }
 }
 ```
@@ -121,7 +118,6 @@ Alternatively, use the **Upload configuration** option in the system tray menu t
 | `telemetry.opentelemetry.exportLogs` | bool | `true` | Include logs in OTel export |
 | `webrtc.iceServers` | array | `[]` | STUN/TURN server list for WebRTC |
 | `webrtc.iceTransportPolicy` | string | `all` | `all` or `relay` |
-| `video.maxCallRecordDuration` | int | `3600` | Maximum recording duration in seconds |
 
 ---
 

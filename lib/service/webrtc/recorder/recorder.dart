@@ -160,7 +160,34 @@ class StreamRecorder implements RecorderI {
     _isStopping = true;
     _maxDurationTimer?.cancel();
     logger.info('[StreamRecorder] Terminating session for $callId');
+    await _logVideoStats();
     await _cleanupInternal();
+  }
+
+  Future<void> _logVideoStats() async {
+    final currentPc = pc;
+    if (currentPc == null) return;
+    try {
+      final stats = await currentPc.getStats();
+      for (final report in stats) {
+        if (report.type == 'outbound-rtp') {
+          final v = report.values;
+          final kind = v['kind'] ?? v['mediaType'];
+          if (kind != 'video') continue;
+          final rtpTs = v['rtpTimestamp'] ?? v['timestamp'];
+          final frames = v['framesSent'];
+          final packets = v['packetsSent'];
+          logger.debug('[StreamRecorder] VideoStats: rtpTimestamp=$rtpTs framesSent=$frames packetsSent=$packets');
+          // rtpTimestamp/90000 = RTP duration in seconds — compare to actual session duration
+          if (rtpTs != null) {
+            final rtpSec = (rtpTs as num) / 90000.0;
+            logger.debug('[StreamRecorder] VideoStats: RTP duration=${rtpSec.toStringAsFixed(2)}s');
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn('[StreamRecorder] getStats failed: $e');
+    }
   }
 
   Future<void> _cleanupInternal() async {
