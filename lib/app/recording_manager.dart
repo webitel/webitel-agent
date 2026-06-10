@@ -1,5 +1,3 @@
-import 'dart:async';
-import 'package:webitel_desk_track/config/service.dart';
 import 'package:webitel_desk_track/core/logger/logger.dart';
 import 'package:webitel_desk_track/core/storage/interface.dart';
 import 'package:webitel_desk_track/service/common/recorder/factory.dart';
@@ -19,11 +17,6 @@ class RecordingManager {
   final _recorders = <RecordingType, RecorderI?>{
     RecordingType.call: null,
     RecordingType.screen: null,
-  };
-
-  final _timers = <RecordingType, Map<String, Timer>>{
-    RecordingType.call: {},
-    RecordingType.screen: {},
   };
 
   /// Binds socket events to recording lifecycle actions.
@@ -70,10 +63,6 @@ class RecordingManager {
       await recorder.start(recordingId: id);
       logger.info('[RecordingManager] Started $type session: $id');
 
-      _timers[type]![id] = Timer(
-        Duration(seconds: AppConfig.instance.maxCallRecordDuration),
-        () => _onStop(id, type: type),
-      );
     } catch (e, st) {
       logger.error('[RecordingManager] Failed to start $type', e, st);
       _recorders[type] = null;
@@ -87,11 +76,6 @@ class RecordingManager {
   }) async {
     final recorder = _recorders[type];
     if (recorder == null) return;
-
-    if (!isRecovering) {
-      _timers[type]![id]?.cancel();
-      _timers[type]!.remove(id);
-    }
 
     try {
       await recorder.stop();

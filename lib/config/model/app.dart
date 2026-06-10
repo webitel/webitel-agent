@@ -5,34 +5,20 @@ class AppConfigModel {
   final String loginUrl;
   final String webitelWsUrl;
 
-  final int videoWidth;
-  final int videoHeight;
-  final int framerate;
-  final int maxCallRecordDuration;
-
   final TelemetryConfig telemetry;
 
   final String webrtcSdpUrl;
   final List<Map<String, dynamic>> webrtcIceServers;
   final String webrtcIceTransportPolicy;
 
-  final List<String> stereoMixKeywords;
-  final List<String> microphoneKeywords;
-
   const AppConfigModel({
     required this.baseUrl,
     required this.loginUrl,
     required this.webitelWsUrl,
-    required this.videoWidth,
-    required this.videoHeight,
-    required this.framerate,
-    required this.maxCallRecordDuration,
     required this.telemetry,
     required this.webrtcSdpUrl,
     required this.webrtcIceServers,
     required this.webrtcIceTransportPolicy,
-    required this.stereoMixKeywords,
-    required this.microphoneKeywords,
   });
 
   factory AppConfigModel.empty() {
@@ -40,24 +26,16 @@ class AppConfigModel {
       baseUrl: '',
       loginUrl: '',
       webitelWsUrl: '',
-      videoWidth: 1280,
-      videoHeight: 720,
-      framerate: 30,
-      maxCallRecordDuration: 3600,
       telemetry: TelemetryConfig.fromJson({}),
       webrtcSdpUrl: '',
       webrtcIceServers: const [],
       webrtcIceTransportPolicy: 'all',
-      stereoMixKeywords: const ['Stereo Mix'],
-      microphoneKeywords: const ['Microphone'],
     );
   }
 
   factory AppConfigModel.fromJson(Map<String, dynamic> json) {
     final server = json['server'] as Map<String, dynamic>? ?? {};
-    final video = json['video'] as Map<String, dynamic>? ?? {};
     final webrtc = json['webrtc'] as Map<String, dynamic>? ?? {};
-    final devices = json['devices'] as Map<String, dynamic>? ?? {};
 
     final baseUrl = server['baseUrl']?.toString() ?? '';
 
@@ -83,10 +61,6 @@ class AppConfigModel {
         '/ws/websocket?application_name=desc_track',
         isWs: true,
       ),
-      videoWidth: _toInt(video['width'], 1280),
-      videoHeight: _toInt(video['height'], 720),
-      framerate: _toInt(video['framerate'], 30),
-      maxCallRecordDuration: _toInt(video['maxCallRecordDuration'], 3600),
       telemetry: TelemetryConfig.fromJson(json['telemetry'] ?? {}),
       webrtcSdpUrl: buildUrl('/api/webrtc/video'),
       webrtcIceServers:
@@ -95,20 +69,7 @@ class AppConfigModel {
               .toList() ??
           const [],
       webrtcIceTransportPolicy: webrtc['iceTransportPolicy'] ?? 'all',
-      stereoMixKeywords: _toStringList(devices['stereoMixKeywords'], [
-        'Stereo Mix',
-      ]),
-      microphoneKeywords: _toStringList(devices['microphoneKeywords'], [
-        'Microphone',
-      ]),
     );
   }
 
-  static int _toInt(dynamic v, int def) =>
-      int.tryParse(v?.toString() ?? '') ?? def;
-
-  static List<String> _toStringList(dynamic v, List<String> def) {
-    if (v is List) return v.map((e) => e.toString()).toList();
-    return def;
-  }
 }

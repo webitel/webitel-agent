@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:webitel_desk_track/config/service.dart';
 import 'package:webitel_desk_track/core/logger/logger.dart';
 import 'package:webitel_desk_track/core/storage/interface.dart';
 import 'package:webitel_desk_track/service/webrtc/common/webrtc/capturer.dart';
@@ -47,6 +46,10 @@ class StreamRecorder implements RecorderI {
       pc = await createPeerConnectionWithConfig(iceServers);
       final currentPc = pc!;
 
+      currentPc.onIceGatheringState = (RTCIceGatheringState state) {
+        logger.debug('[StreamRecorder] ICE Gathering: ${state.name}');
+      };
+
       currentPc.onIceConnectionState = (RTCIceConnectionState state) {
         logger.debug('[StreamRecorder] ICE Connection State: ${state.name}');
 
@@ -90,10 +93,13 @@ class StreamRecorder implements RecorderI {
 
       for (final stream in streams) {
         for (final track in stream.getTracks()) {
+          logger.debug('[StreamRecorder] Adding track: kind=${track.kind} id=${track.id} enabled=${track.enabled}');
           final sender = await currentPc.addTrack(track, stream);
           if (track.kind == 'video') await _configureVideoEncoding(sender);
         }
       }
+
+      logger.debug('[StreamRecorder] Streams: ${streams.length}, total tracks: ${streams.fold(0, (n, s) => n + s.getTracks().length)}');
 
       final offer = await currentPc.createOffer();
       if (_isStopping) return;
@@ -110,6 +116,8 @@ class StreamRecorder implements RecorderI {
 
       final localDesc = await currentPc.getLocalDescription();
       if (localDesc == null) throw Exception('SDP generation failed');
+
+      _logSdpAudioLines(localDesc.sdp ?? '', 'offer');
 
       final response = await sendSDPToServer(
         url: sdpResolverUrl,
@@ -140,7 +148,7 @@ class StreamRecorder implements RecorderI {
     params.encodings![0]
       ..maxBitrate = 2500000
       ..minBitrate = 500000
-      ..maxFramerate = AppConfig.instance.framerate;
+      ..maxFramerate = 15;
 
     params.degradationPreference = RTCDegradationPreference.MAINTAIN_RESOLUTION;
     await sender.setParameters(params);
@@ -152,7 +160,34 @@ class StreamRecorder implements RecorderI {
     _isStopping = true;
     _maxDurationTimer?.cancel();
     logger.info('[StreamRecorder] Terminating session for $callId');
+    await _logVideoStats();
     await _cleanupInternal();
+  }
+
+  Future<void> _logVideoStats() async {
+    final currentPc = pc;
+    if (currentPc == null) return;
+    try {
+      final stats = await currentPc.getStats();
+      for (final report in stats) {
+        if (report.type == 'outbound-rtp') {
+          final v = report.values;
+          final kind = v['kind'] ?? v['mediaType'];
+          if (kind != 'video') continue;
+          final rtpTs = v['rtpTimestamp'] ?? v['timestamp'];
+          final frames = v['framesSent'];
+          final packets = v['packetsSent'];
+          logger.debug('[StreamRecorder] VideoStats: rtpTimestamp=$rtpTs framesSent=$frames packetsSent=$packets');
+          // rtpTimestamp/90000 = RTP duration in seconds — compare to actual session duration
+          if (rtpTs != null) {
+            final rtpSec = (rtpTs as num) / 90000.0;
+            logger.debug('[StreamRecorder] VideoStats: RTP duration=${rtpSec.toStringAsFixed(2)}s');
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn('[StreamRecorder] getStats failed: $e');
+    }
   }
 
   Future<void> _cleanupInternal() async {
@@ -179,6 +214,18 @@ class StreamRecorder implements RecorderI {
     if (pc != null) {
       await pc!.close();
       pc = null;
+    }
+  }
+
+  void _logSdpAudioLines(String sdp, String label) {
+    final lines = sdp.split('\n').where((l) {
+      if (l.startsWith('m=audio')) return true;
+      if (l.startsWith('a=rtpmap')) return true;
+      if (l.startsWith('a=fmtp')) return true;
+      return false;
+    });
+    for (final l in lines) {
+      logger.debug('[StreamRecorder] SDP $label: ${l.trim()}');
     }
   }
 

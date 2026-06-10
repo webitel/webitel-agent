@@ -1,15 +1,10 @@
 import 'dart:io';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:webitel_desk_track/config/service.dart';
 import 'package:webitel_desk_track/core/logger/logger.dart';
 
 Future<List<MediaStream>> captureAllDesktopScreensWindows(
   RTCPeerConnection pc,
 ) async {
-  final config = AppConfig.instance;
-  final int width = config.videoWidth;
-  final int height = config.videoHeight;
-
   final List<MediaStream> streams = [];
 
   try {
@@ -27,19 +22,19 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
     for (final source in sources) {
       final screenStream = await navigator.mediaDevices.getDisplayMedia({
         'video': {
-          'mandatory': {'maxWidth': width, 'maxHeight': height},
-          'optional': [
-            {'scaleResolutionDownBy': 1.0},
-          ],
+          'mandatory': {
+            'frameRate': 15.0,
+          },
         },
         'audio': true,
       });
 
       streams.add(screenStream);
       logger.info('[Capturer] Capture started for monitor ${source.name}');
-      logger.info(
-        '[Capturer] Loopback audio tracks: ${screenStream.getAudioTracks().length}',
-      );
+      for (final t in screenStream.getAudioTracks()) {
+        final settings = t.getSettings();
+        logger.info('[Capturer] Loopback track: id=${t.id} sampleRate=${settings['sampleRate']} channels=${settings['channelCount']}');
+      }
     }
 
     // Microphone as a separate WebRTC audio track.
@@ -49,7 +44,10 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
         'video': false,
       });
       streams.add(micStream);
-      logger.info('[Capturer] Mic audio tracks: ${micStream.getAudioTracks().length}');
+      for (final t in micStream.getAudioTracks()) {
+        final settings = t.getSettings();
+        logger.info('[Capturer] Mic track: id=${t.id} sampleRate=${settings['sampleRate']} channels=${settings['channelCount']}');
+      }
     } catch (e) {
       logger.warn('[Capturer] Mic capture failed (no mic?): $e');
     }
@@ -62,10 +60,6 @@ Future<List<MediaStream>> captureAllDesktopScreensWindows(
 }
 
 Future<MediaStream?> captureDesktopScreen() async {
-  final config = AppConfig.instance;
-  final int width = config.videoWidth;
-  final int height = config.videoHeight;
-
   try {
     logger.info('[Capturer] Starting screen capture');
 
@@ -77,7 +71,7 @@ Future<MediaStream?> captureDesktopScreen() async {
     final screenStream = await navigator.mediaDevices.getDisplayMedia({
       'video': {
         'deviceId': source.id,
-        'mandatory': {'maxWidth': width, 'maxHeight': height},
+        'mandatory': {'frameRate': 15.0},
       },
       'audio': true,
     });

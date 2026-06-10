@@ -12,8 +12,8 @@ Primary target: **Windows**. macOS and Linux builds exist but are secondary.
 WebSocket (ws/)
   └── NotificationHandler
         ├── ScreenStreamer      — real-time screen share to supervisor (WebRTC offer/answer)
-        ├── RecordingManager   ← StreamRecorder / LocalVideoRecorder
-        │     └── Capturer     — enumerates DirectShow devices, runs FFmpeg for audio
+        ├── RecordingManager   ← StreamRecorder
+        │     └── Capturer     — getDisplayMedia (video + loopback audio) + getUserMedia (mic)
         └── ScreenshotService  — periodic + on-demand screenshots via desktop_screenshot
 ```
 
@@ -27,18 +27,20 @@ Key service paths:
 | WebRTC recording | `lib/service/webrtc/recorder/recorder.dart` |
 | Audio + screen capture | `lib/service/webrtc/common/webrtc/capturer.dart` |
 | FFmpeg binary lifecycle | `lib/service/ffmpeg/manager/manager.dart` |
-| Local file recording | `lib/service/ffmpeg/recorder/` |
 | Screenshots | `lib/service/screenshot/` |
 | App config | `lib/config/` |
 
-## Audio Capture (Windows)
+## Audio + Video Capture (Windows)
 
-Audio is captured by FFmpeg using DirectShow (`-f dshow`). The app enumerates devices with `ffmpeg -list_devices true -f dshow -i dummy` and searches by keyword for:
+Audio and video are captured via WebRTC APIs:
 
-- **Stereo Mix** — system audio loopback (`AppConfig.stereoMixKeywords`, default: `['Stereo Mix']`)
-- **Microphone** — agent mic (`AppConfig.microphoneKeywords`, default: `['Microphone']`)
+- **Screen video** — `getDisplayMedia({ video: { mandatory: { frameRate: 15 } } })` — 15 fps hardcoded
+- **Loopback audio** — `getDisplayMedia({ audio: true })` — system audio via `ApplicationLoopbackCapturer` (Windows 10 20H2+, `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`)
+- **Microphone** — `getUserMedia({ audio: true })` — agent mic as separate WebRTC track
 
-Before starting capture, each found device is probed with a 0.1 s test recording to confirm it can actually be opened. If Stereo Mix is disabled in Windows Sound settings it will appear in the device list but fail the probe — the app then falls back to **microphone-only** audio. Recording proceeds without system audio rather than failing entirely.
+Both audio tracks (loopback + mic) and the video track are sent as proper RTP streams to the recording server via `StreamRecorder`.
+
+**Important:** Windows audio device must be set to **48000 Hz** (Sound Settings → Playback device → Advanced). If set to 44100 Hz, `ApplicationLoopbackCapturer` captures at 44100 Hz but the WebRTC pipeline timestamps audio as 48000 Hz, causing ~8.8% audio drift (audio runs ahead of video).
 
 ## Config
 
@@ -47,7 +49,17 @@ Loaded from `config.json` in the OS app-support directory at startup:
 - Windows: `%APPDATA%\Webitel-Agent\config.json`
 - macOS: `~/Library/Application Support/Webitel-Agent/config.json`
 
-Key fields: `server`, `devices.stereoMixKeywords`, `devices.microphoneKeywords`, `video.width`, `video.height`, `videoSaveLocally`.
+Key fields:
+
+```json
+{
+  "server": { "baseUrl": "https://your-server.com" },
+  "webrtc": {
+    "iceServers": [{ "urls": "stun:stun.l.google.com:19302" }],
+    "iceTransportPolicy": "all"
+  }
+}
+```
 
 ## Code Conventions
 
