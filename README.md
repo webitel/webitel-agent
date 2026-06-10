@@ -1,6 +1,6 @@
 # Webitel DeskTrack
 
-A cross-platform desktop application for Webitel call-center agents. It monitors agent activity by streaming the screen to supervisors in real time, capturing periodic screenshots, and recording screen sessions triggered by call-center events.
+A cross-platform desktop application for Webitel call-center agents. Streams the agent's screen to supervisors in real time, captures periodic screenshots, and records screen sessions driven by call-center events.
 
 **Primary platform:** Windows. macOS and Linux builds are supported but secondary.
 
@@ -10,38 +10,45 @@ A cross-platform desktop application for Webitel call-center agents. It monitors
 
 | Feature | Description |
 | --- | --- |
-| **Periodic Screenshots** | Automatic screen captures sent to the Webitel server on a configurable interval |
-| **Screen Recording** | Records the agent's screen + audio in response to WebSocket events from the Webitel server |
-| **Live Screen Streaming** | Real-time screen share to supervisors via WebRTC (offer/answer signaling over WebSocket) |
-| **Audio Capture** | System audio (loopback) and microphone captured as WebRTC tracks via Windows Application Loopback API |
-| **OpenTelemetry** | Structured log export to an OTel collector (logs, traces) |
-| **WebRTC Metrics** | Periodic performance logging: FPS, bitrate, RTT, packet loss, ICE state |
-| **Tray Menu** | Manual configuration upload without restarting the application |
+| **Screen Recording** | Records screen + audio automatically when a call starts; stops after post-processing completes |
+| **Live Screen Streaming** | Real-time WebRTC screen share to a supervisor on demand |
+| **Periodic Screenshots** | Automatic screen captures uploaded to the server on a fixed interval |
+| **Audio Capture** | System loopback + microphone captured as separate RTP tracks (Windows) |
+| **OpenTelemetry** | Structured log export to an OTel collector |
+| **Tray Menu** | Upload a new config file without restarting the application |
 
 ---
 
 ## Architecture
 
 ```text
-WebSocket (lib/ws/)
-  └── NotificationHandler
-        ├── ScreenStreamer      — real-time WebRTC screen share to supervisor
-        ├── RecordingManager
-        │     └── StreamRecorder  — records screen + audio via WebRTC to server
-        │           └── Capturer  — getDisplayMedia (video + loopback) + getUserMedia (mic)
-        └── ScreenshotService  — periodic and on-demand screenshots
+AppFlow (singleton)
+  ├── SocketManager ─── WebitelSocket
+  │     ├── CallHandler          — call state machine; drives automatic recording
+  │     └── NotificationHandler  — manual commands: share, screenshot, record
+  ├── RecordingManager           — starts/stops StreamRecorder on call or manual signal
+  │     └── StreamRecorder       — WebRTC peer connection to the recording server
+  │           └── Capturer       — getDisplayMedia (video + loopback) + getUserMedia (mic)
+  ├── ScreenStreamer              — separate WebRTC session for live supervisor view
+  └── ScreenshotService          — periodic + on-demand screenshots
 ```
+
+**Recording lifecycle:**
+
+- **Start** — `CallHandler` detects a call with `record_screen=true` → `RecordingManager._onStart`
+- **Stop** — socket stop signal, ICE Failed/Disconnected (10 s recovery window), or 1-hour safety timeout inside `StreamRecorder`
 
 Key source paths:
 
 | Layer | Path |
 | --- | --- |
-| WebSocket core | `lib/ws/` |
+| App entry & lifecycle | `lib/app/flow.dart` |
+| Call state machine | `lib/ws/handlers/call_handler.dart` |
 | Notification routing | `lib/ws/handlers/notification_handler.dart` |
-| Screen streaming (WebRTC) | `lib/service/webrtc/streamer/streamer.dart` |
+| Recording orchestration | `lib/app/recording_manager.dart` |
 | WebRTC recording | `lib/service/webrtc/recorder/recorder.dart` |
+| Live screen streaming | `lib/service/webrtc/streamer/streamer.dart` |
 | Audio + screen capture | `lib/service/webrtc/common/webrtc/capturer.dart` |
-| FFmpeg binary lifecycle | `lib/service/ffmpeg/manager/manager.dart` |
 | Screenshots | `lib/service/screenshot/` |
 | App config | `lib/config/` |
 
@@ -49,23 +56,23 @@ Key source paths:
 
 ## Audio & Video Capture (Windows)
 
-All capture is done via WebRTC APIs — no FFmpeg for recording:
+All capture uses WebRTC APIs — no FFmpeg involved in recording:
 
-- **Screen video** — `getDisplayMedia` at **15 fps** (hardcoded)
+- **Screen video** — `getDisplayMedia` at **15 fps** hardcoded via `frameRate: 15.0`
 - **Loopback audio** — `getDisplayMedia({ audio: true })` via `ApplicationLoopbackCapturer` (Windows 10 20H2+)
 - **Microphone** — `getUserMedia({ audio: true })` as a separate RTP track
 
-Both audio tracks and the video track are sent as RTP streams to the recording server via `StreamRecorder`.
+All three tracks are sent as RTP streams to the recording server (`StreamRecorder`).
 
-> **Important:** The Windows audio output device must be set to **48000 Hz**.
-> Go to Sound Settings → Playback device → Properties → Advanced → Default Format → select `48000 Hz`.
-> At 44100 Hz, `ApplicationLoopbackCapturer` introduces ~8.8% clock drift (audio runs ahead of video).
+> **Important:** The Windows audio output device must be set to **48 000 Hz**.
+> Sound Settings → Playback device → Properties → Advanced → Default Format → `48000 Hz`.
+> At 44 100 Hz, `ApplicationLoopbackCapturer` introduces ~8.8 % audio clock drift.
 
 ---
 
 ## Configuration
 
-On first launch, place a `config.json` file in the OS application-support directory:
+Place a `config.json` file in the OS application-support directory before first launch:
 
 | Platform | Path |
 | --- | --- |
@@ -73,7 +80,7 @@ On first launch, place a `config.json` file in the OS application-support direct
 | macOS | `~/Library/Application Support/Webitel-Agent/config.json` |
 | Linux | `~/.config/Webitel-Agent/config.json` |
 
-Alternatively, use the **Upload configuration** option in the system tray menu to load the file manually.
+Use **Upload configuration** in the system tray to reload the file without restarting.
 
 ### Example `config.json`
 
@@ -93,7 +100,7 @@ Alternatively, use the **Upload configuration** option in the system tray menu t
       "enabled": false,
       "endpoint": "http://192.168.1.10:4317",
       "serviceName": "webitel-desk-track",
-      "exportLogs": true
+      "exportLogs": false
     }
   },
   "webrtc": {
@@ -114,9 +121,9 @@ Alternatively, use the **Upload configuration** option in the system tray menu t
 | `telemetry.file.path` | string | — | Log file path (relative or absolute) |
 | `telemetry.opentelemetry.enabled` | bool | `false` | Enable OTel export |
 | `telemetry.opentelemetry.endpoint` | string | — | OTel collector address (HTTP/gRPC) |
-| `telemetry.opentelemetry.serviceName` | string | — | Service name reported to the collector |
-| `telemetry.opentelemetry.exportLogs` | bool | `true` | Include logs in OTel export |
-| `webrtc.iceServers` | array | `[]` | STUN/TURN server list for WebRTC |
+| `telemetry.opentelemetry.serviceName` | string | — | Service name tag in the OTel export |
+| `telemetry.opentelemetry.exportLogs` | bool | `false` | Include logs in the OTel export |
+| `webrtc.iceServers` | array | `[]` | STUN/TURN server list |
 | `webrtc.iceTransportPolicy` | string | `all` | `all` or `relay` |
 
 ---
@@ -147,11 +154,11 @@ FFmpeg binaries are bundled as Flutter assets (used for screenshots only):
 ## Development
 
 ```bash
-# Run on Windows
+# Windows
 flutter run -d windows
 
-# Run on macOS
+# macOS
 flutter run -d macos
 ```
 
-Set `telemetry.level` to `debug` in `config.json` to enable verbose WebSocket and WebRTC logging.
+Set `telemetry.level` to `debug` in `config.json` for verbose WebSocket and WebRTC logging.

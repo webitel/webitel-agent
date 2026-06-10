@@ -49,3 +49,6 @@ build_sign_dmg.md
 build_macos.sh
 msi.bat
 scripts/msix.bat
+
+# Environment-specific configs
+configs/
