@@ -16,8 +16,6 @@ class AppInitializer {
   static Future<void> run() async {
     logger.info('[AppInitializer] Bootstrap sequence started');
 
-    if (Platform.isWindows) _disableAudioDucking();
-
     // 1. Window Configuration
     // [GUARD] Ensure window is initialized before any UI logic
     await windowManager.ensureInitialized();
@@ -28,6 +26,8 @@ class AppInitializer {
     // 2. Load Config & Init Logger
     final config = await AppConfig.load();
     await logger.init(config);
+
+    if (Platform.isWindows) _disableAudioDucking();
 
     // 3. System Tray Initialization
     // [LOGIC] Pass storage directly for consistent auth handling
@@ -67,7 +67,7 @@ class AppInitializer {
   // (e.g. the browser playing an active Webitel call).
   static void _disableAudioDucking() {
     try {
-      Process.runSync('reg', [
+      final result = Process.runSync('reg', [
         'add',
         r'HKCU\SOFTWARE\Microsoft\Multimedia\Audio\Communications',
         '/v', 'DuckingPreference',
@@ -75,7 +75,11 @@ class AppInitializer {
         '/d', '3',
         '/f',
       ]);
-      logger.info('[AppInitializer] Audio ducking disabled');
+      if (result.exitCode == 0) {
+        logger.info('[AppInitializer] Audio ducking disabled');
+      } else {
+        logger.warn('[AppInitializer] reg exited ${result.exitCode}: ${result.stderr}');
+      }
     } catch (e) {
       logger.warn('[AppInitializer] Failed to disable audio ducking: $e');
     }
