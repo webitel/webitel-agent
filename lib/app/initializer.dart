@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:webitel_desk_track/app/flow.dart';
 import 'package:webitel_desk_track/config/service.dart';
@@ -13,6 +15,8 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 class AppInitializer {
   static Future<void> run() async {
     logger.info('[AppInitializer] Bootstrap sequence started');
+
+    if (Platform.isWindows) _disableAudioDucking();
 
     // 1. Window Configuration
     // [GUARD] Ensure window is initialized before any UI logic
@@ -54,6 +58,26 @@ class AppInitializer {
           );
         }
       };
+    }
+  }
+
+  // Sets Windows "Communications" audio ducking to "Do nothing" so that
+  // libwebrtc opening the mic via eCommunications endpoint does not cause
+  // Windows to automatically reduce the volume of other audio sessions
+  // (e.g. the browser playing an active Webitel call).
+  static void _disableAudioDucking() {
+    try {
+      Process.runSync('reg', [
+        'add',
+        r'HKCU\SOFTWARE\Microsoft\Multimedia\Audio\Communications',
+        '/v', 'DuckingPreference',
+        '/t', 'REG_DWORD',
+        '/d', '3',
+        '/f',
+      ]);
+      logger.info('[AppInitializer] Audio ducking disabled');
+    } catch (e) {
+      logger.warn('[AppInitializer] Failed to disable audio ducking: $e');
     }
   }
 
