@@ -66,6 +66,7 @@ class AppInitializer {
   // Windows to automatically reduce the volume of other audio sessions
   // (e.g. the browser playing an active Webitel call).
   static void _disableAudioDucking() {
+    print('[DEBUG] _disableAudioDucking called');
     try {
       final result = Process.runSync('reg', [
         'add',
