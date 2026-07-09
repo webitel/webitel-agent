@@ -13,6 +13,10 @@ class FFmpegManager {
   /// Initializes the FFmpeg binary.
   /// Should be called during app startup to ensure the binary is ready.
   Future<void> init() async {
+    // Windows recording/streaming goes through StreamRecorder (WebRTC RTP),
+    // which never touches FFmpeg — skip loading a binary that isn't bundled.
+    if (Platform.isWindows) return;
+
     try {
       _ffmpegPath = await _prepareFFmpeg();
       logger.info(
