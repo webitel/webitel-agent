@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:webitel_desk_track/core/logger/logger.dart';
 import 'package:webitel_desk_track/core/storage/interface.dart';
@@ -62,31 +61,15 @@ class TokenWatcher {
           .get(uri, headers: {'X-Webitel-Access': token})
           .timeout(const Duration(seconds: 10));
 
-      // Handle explicit expiration
+      // Only react to hard expiration. Re-login through the WebView reuses the
+      // still-valid server SSO session and returns the same non-renewed token,
+      // so a proactive "nearing expiration" trigger loops forever until the
+      // token actually dies.
       if (resp.statusCode == 401) {
         logger.warn('[TokenWatcher] Token expired (401).');
         await _triggerExpired();
-        return;
       }
-
-      if (resp.statusCode == 200) {
-        final body = jsonDecode(resp.body);
-        final exp = int.tryParse(body['expires_at']?.toString() ?? '');
-
-        if (exp != null) {
-          final now = DateTime.now().millisecondsSinceEpoch;
-          const tenMinutesInMs = 10 * 60 * 1000;
-
-          // If token expires in less than 10 minutes
-          if (exp - now < tenMinutesInMs) {
-            logger.warn(
-              '[TokenWatcher] Token is nearing expiration (less than 10m).',
-            );
-            await _triggerExpired();
-          }
-        }
-      }
-    } catch (e, st) {
+    } catch (e) {
       // We use warn instead of error to avoid spamming logs on transient network issues
       logger.warn('[TokenWatcher] Validation request failed: $e');
     } finally {
