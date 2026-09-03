@@ -1,4 +1,4 @@
-# Getting Started (Windows)
+# Installation and Setup Guide (Windows)
 
 This guide walks through bringing up Webitel DeskTrack from scratch: installing
 the app, providing its config, and configuring the Webitel back office so screen
