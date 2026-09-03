@@ -44,22 +44,11 @@ configuration** in the system tray.
 
 ## 3. Configure Webitel (back office)
 
-Recording and screen monitoring are gated by three back-office settings. All
-three are configured in the Webitel admin UI.
+Screen monitoring and recording are gated by back-office settings, configured
+in the Webitel admin UI. Sections 3.1 and 3.2 are the baseline required in all
+cases; section 3.3 is only for automatic recording.
 
-### 3.1. Add the `wbt_record_screen` variable
-
-Screen recording starts only when the call carries a `wbt_record_screen`
-variable. Add it either on the **Queue** or on the routing **Schema** that
-handles the call:
-
-- **Queue** — open the queue and add `wbt_record_screen` to its variables.
-- **Schema** — set the `wbt_record_screen` variable inside the flow.
-
-Set the value to `true` to trigger recording for calls going through that
-queue / schema.
-
-### 3.2. Grant the "Control agent screen" permission
+### 3.1. Grant the "Control agent screen" permission
 
 The role of anyone who needs to connect to, record, view, or download an
 agent's screen must hold the **Control agent screen** permission.
@@ -69,7 +58,7 @@ agent's screen must hold the **Control agent screen** permission.
 > **Control agent screen** — *Grants permission to connect to the screen,
 > record it, view recordings and screenshots, and download them.*
 
-### 3.3. Enable "Agent screen control" for the agent
+### 3.2. Enable "Agent screen control" for the agent
 
 `Contact center → Agents → <agent> → General`, then enable the
 **Agent screen control** toggle.
@@ -77,6 +66,22 @@ agent's screen must hold the **Control agent screen** permission.
 This switch lets a supervisor follow the agent's screen. Note it cannot be
 disabled per-agent while the same setting is enabled at the **Team** level — to
 control it centrally, toggle it on the team instead.
+
+### 3.3. Add the `wbt_record_screen` variable (automatic recording only)
+
+This step is required **only for automatic screen recording** — recording that
+starts on its own when a call comes in. For **manual** recording (started on
+demand by a supervisor) it is **not needed**; sections 3.1–3.2 are enough.
+
+Automatic recording starts only when the call carries a `wbt_record_screen`
+variable. Add it either on the **Queue** or on the routing **Schema** that
+handles the call:
+
+- **Queue** — open the queue and add `wbt_record_screen` to its variables.
+- **Schema** — set the `wbt_record_screen` variable inside the flow.
+
+Set the value to `true` to trigger recording for calls going through that
+queue / schema.
 
 ---
 
@@ -89,9 +94,11 @@ signs in there with their Webitel credentials.
 Once authenticated, the app opens its WebSocket and is ready to record and
 stream:
 
-- Recording starts automatically on a call whose `wbt_record_screen` is set.
-- A supervisor with **Control agent screen** can request a live view or a
-  screenshot on demand.
+- **Automatic recording** starts on a call whose `wbt_record_screen` is set
+  (section 3.3).
+- **Manual** live view, recording, or screenshots can be requested on demand by
+  a supervisor with the **Control agent screen** permission — no
+  `wbt_record_screen` required.
 
 For verbose WebSocket / WebRTC logging, set `telemetry.level` to `debug` in
 `config.json`.
