@@ -44,9 +44,12 @@ configuration** in the system tray.
 
 ## 3. Configure Webitel (back office)
 
-Screen monitoring and recording are gated by back-office settings, configured
-in the Webitel admin UI. Sections 3.1 and 3.2 are the baseline required in all
-cases; section 3.3 is only for automatic recording.
+Screen monitoring and recording are configured in the Webitel admin UI.
+
+- **Manual** monitoring, recording, and screenshots need only the permission in
+  3.1.
+- **Automatic** screen recording during a call needs, in addition, the toggle
+  in 3.2 **and** the variable in 3.3.
 
 ### 3.1. Grant the "Control agent screen" permission
 
@@ -58,20 +61,24 @@ agent's screen must hold the **Control agent screen** permission.
 > **Control agent screen** — *Grants permission to connect to the screen,
 > record it, view recordings and screenshots, and download them.*
 
+With this permission a supervisor can already connect on demand and take
+manual recordings and screenshots — regardless of the toggle in 3.2 or the
+variable in 3.3.
+
 ### 3.2. Enable "Agent screen control" for the agent
 
 `Contact center → Agents → <agent> → General`, then enable the
 **Agent screen control** toggle.
 
-This switch lets a supervisor follow the agent's screen. Note it cannot be
-disabled per-agent while the same setting is enabled at the **Team** level — to
-control it centrally, toggle it on the team instead.
+This switch lets a supervisor follow the agent's screen live, and is required
+for automatic recording during a call. Note it cannot be disabled per-agent
+while the same setting is enabled at the **Team** level — to control it
+centrally, toggle it on the team instead.
 
-### 3.3. Add the `wbt_record_screen` variable (automatic recording only)
+### 3.3. Add the `wbt_record_screen` variable
 
-This step is required **only for automatic screen recording** — recording that
-starts on its own when a call comes in. For **manual** recording (started on
-demand by a supervisor) it is **not needed**; sections 3.1–3.2 are enough.
+Together with the toggle in 3.2, this drives **automatic screen recording
+during a call**. It is not needed for manual recording.
 
 Automatic recording starts only when the call carries a `wbt_record_screen`
 variable. Add it either on the **Queue** or on the routing **Schema** that
