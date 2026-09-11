@@ -4,11 +4,6 @@ Use this guide when the app **installs / launches on some machines but not
 others**. The app is signed with our code-signing certificate, so no certificate
 import is needed.
 
-> The Windows build captures the screen and audio **in-process** via native
-> WebRTC — there is **no `ffmpeg.exe`** on Windows. So the things that break an
-> install/launch are missing **runtimes** and **antivirus**, not a bundled
-> helper binary.
-
 The usual culprits, in order:
 
 1. **Missing Microsoft Edge WebView2 Runtime** — login window is blank / app
