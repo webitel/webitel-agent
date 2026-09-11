@@ -102,13 +102,49 @@ same exclusions from the management console.
 
 ---
 
-## About the firewall
+## Checking install logs from the Windows console
 
-The firewall does **not** block installation — a local MSI/MSIX install needs no
-network. The firewall only matters **after** install, for the app to connect and
-stream: outbound `443/TCP` (WebSocket + API) and, for screen share over VPN,
-TURN on `3478` UDP/TCP. If the app installs and logs in but the supervisor sees a
-black screen, that's a network/TURN issue, not an install one.
+When an install fails silently, capture a log and read the exact error.
+
+**MSI — verbose install log.** Run the installer from an elevated
+**Command Prompt / PowerShell** with logging enabled:
+
+```powershell
+msiexec /i "C:\path\webitel_desk_track.msi" /l*v "$env:TEMP\wdt_install.log"
+```
+
+Then open the log and jump to the failure — search for `value 3` (the standard
+MSI "action failed" marker) or `Return value 3`:
+
+```powershell
+Select-String -Path "$env:TEMP\wdt_install.log" -Pattern "value 3","error" -SimpleMatch
+```
+
+**MSIX — deployment error in the console.** Install from PowerShell so the error
+is printed directly:
+
+```powershell
+Add-AppxPackage -Path "C:\path\webitel_desk_track.msix"
+```
+
+If it fails, get the full reason from the deployment log:
+
+```powershell
+Get-AppxLog | Where-Object { $_.Message -match "webitel" } | Format-List
+```
+
+MSIX deployment events are also in **Event Viewer** under
+`Applications and Services Logs → Microsoft → Windows → AppXDeployment-Server`.
+
+**App runtime log** (after install, to see how far the app got on launch):
+
+```powershell
+Get-Content "$env:APPDATA\com.example\webitel_desk_track\logs\app.log" -Tail 50 -Wait
+```
+
+Look for `[WS_CONN] ESTABLISHED` / `[SOCKET] AUTH_COMPLETED` (started and signed
+in OK). If the log stops after startup with no login progress, the login webview
+never rendered — WebView2 is missing (section 1).
 
 ---
 
