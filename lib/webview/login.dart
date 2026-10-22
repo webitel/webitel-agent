@@ -54,13 +54,16 @@ class _LoginWebViewState extends State<LoginWebView> {
               setState(() {});
 
               if (url != null && !_tokenHandled) {
-                await _handleTokenFromUri(Uri.parse(url.toString()));
+                await _handleToken(controller, Uri.parse(url.toString()));
               }
             },
             shouldOverrideUrlLoading: (controller, navigationAction) async {
               final uri = navigationAction.request.url;
-              if (uri != null && !_tokenHandled) {
-                await _handleTokenFromUri(uri);
+              if (uri != null &&
+                  !_tokenHandled &&
+                  navigationAction.isForMainFrame) {
+                await _handleToken(controller, uri);
+                if (_tokenHandled) return NavigationActionPolicy.CANCEL;
               }
               return NavigationActionPolicy.ALLOW;
             },
@@ -137,24 +140,44 @@ class _LoginWebViewState extends State<LoginWebView> {
     );
   }
 
-  Future<void> _handleTokenFromUri(Uri uri) async {
-    logger.debug('Checking URI for accessToken: $uri');
-    final token = uri.queryParameters['accessToken'];
-
-    if (token != null && token.isNotEmpty) {
-      _tokenHandled = true;
-      logger.debug('Found token: $token');
-
-      try {
-        await widget.storage.writeAccessToken(token);
-        logger.info('Token saved successfully.');
-
-        if (mounted) {
-          Navigator.of(context).pop(true);
-        }
-      } catch (e, st) {
-        logger.error('Failed to save token: $e\n$st');
-      }
+  // web-client-auth no longer appends accessToken to the redirect URL
+  // (WTEL-10705); it only stores it in localStorage before leaving /app/auth.
+  Future<void> _handleToken(InAppWebViewController controller, Uri uri) async {
+    var token = uri.queryParameters['accessToken'];
+    if ((token == null || token.isEmpty) && !_isAuthPage(uri)) {
+      token = await _readTokenFromLocalStorage(controller);
     }
+    if (token == null || token.isEmpty) return;
+
+    _tokenHandled = true;
+    try {
+      await widget.storage.writeAccessToken(token);
+      logger.info('Token saved successfully.');
+
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } catch (e, st) {
+      _tokenHandled = false;
+      logger.error('Failed to save token: $e\n$st');
+    }
+  }
+
+  bool _isAuthPage(Uri uri) => uri.path.startsWith('/app/auth');
+
+  Future<String?> _readTokenFromLocalStorage(
+    InAppWebViewController controller,
+  ) async {
+    try {
+      final value = await controller.evaluateJavascript(
+        source: "window.localStorage.getItem('access-token')",
+      );
+      if (value is String && value.isNotEmpty && value != 'undefined') {
+        return value;
+      }
+    } catch (e) {
+      logger.warn('Failed to read access-token from WebView localStorage: $e');
+    }
+    return null;
   }
 }
