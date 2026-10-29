@@ -21,6 +21,13 @@ class _LoginWebViewState extends State<LoginWebView> {
   bool _loading = true;
   bool _hasError = false;
   bool _tokenHandled = false;
+  String? _rejectedToken;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.storage.readAccessToken().then((t) => _rejectedToken = t);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -30,7 +37,9 @@ class _LoginWebViewState extends State<LoginWebView> {
         children: [
           InAppWebView(
             initialUrlRequest: URLRequest(
-              url: WebUri('${widget.url}/app/auth'),
+              url: WebUri(
+                Uri.parse(widget.url).resolve('/app/auth').toString(),
+              ),
             ),
             initialSettings: InAppWebViewSettings(
               javaScriptEnabled: true,
@@ -44,9 +53,13 @@ class _LoginWebViewState extends State<LoginWebView> {
             onWebViewCreated: (controller) {
               _controller = controller;
             },
-            onLoadStart: (controller, url) {
+            onLoadStart: (controller, url) async {
               _loading = true;
               setState(() {});
+
+              if (url != null && !_tokenHandled) {
+                await _handleToken(controller, Uri.parse(url.toString()));
+              }
             },
             onLoadStop: (controller, url) async {
               _loading = false;
@@ -58,11 +71,15 @@ class _LoginWebViewState extends State<LoginWebView> {
               }
             },
             shouldOverrideUrlLoading: (controller, navigationAction) async {
-              final uri = navigationAction.request.url;
-              if (uri != null &&
-                  !_tokenHandled &&
-                  navigationAction.isForMainFrame) {
-                await _handleToken(controller, uri);
+              // On Windows the request stays paused until this returns, so no
+              // evaluateJavascript here: it never completes and hangs the load.
+              final token =
+                  navigationAction.request.url?.queryParameters['accessToken'];
+              if (!_tokenHandled &&
+                  navigationAction.isForMainFrame &&
+                  token != null &&
+                  token.isNotEmpty) {
+                await _saveToken(token);
                 if (_tokenHandled) return NavigationActionPolicy.CANCEL;
               }
               return NavigationActionPolicy.ALLOW;
@@ -148,6 +165,13 @@ class _LoginWebViewState extends State<LoginWebView> {
       token = await _readTokenFromLocalStorage(controller);
     }
     if (token == null || token.isEmpty) return;
+    await _saveToken(token);
+  }
+
+  Future<void> _saveToken(String token) async {
+    if (_tokenHandled) return;
+    // The expired token that triggered this login may still be in localStorage.
+    if (token == _rejectedToken) return;
 
     _tokenHandled = true;
     try {
