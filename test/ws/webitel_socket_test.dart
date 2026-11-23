@@ -15,6 +15,8 @@ class _FakeWebitel {
   final sockets = <WebSocket>[];
   bool rejectAuth = false;
   int authErrorCode = 401;
+  bool failAgentSession = false;
+  bool dropOnAgentSession = false;
   String callChannelState = 'waiting';
   int authAttempts = 0;
 
@@ -50,6 +52,20 @@ class _FakeWebitel {
           socket.add(jsonEncode({'seq_reply': seq, 'status': 'OK'}));
         }
       case 'cc_agent_session':
+        if (dropOnAgentSession) {
+          socket.close();
+          return;
+        }
+        if (failAgentSession) {
+          socket.add(
+            jsonEncode({
+              'seq_reply': seq,
+              'status': 'FAIL',
+              'error': {'id': 'internal', 'status': 'Internal', 'code': 500},
+            }),
+          );
+          return;
+        }
         socket.add(
           jsonEncode({
             'seq_reply': seq,
@@ -110,6 +126,7 @@ void main() {
   });
 
   tearDown(() async {
+    WebitelSocket.recordingGrace = const Duration(seconds: 60);
     await socket.disconnect();
     await server.close();
   });
@@ -199,6 +216,52 @@ void main() {
     socket.notifyRecordingLost('call-1');
     await Future<void>.delayed(const Duration(milliseconds: 15500));
     expect(attempts, 2, reason: 'retried once after a failure, then stopped');
+  });
+
+  Future<void> startRecordingCall() async {
+    await socket.connect();
+    await socket.authenticate();
+    socket.initServices(
+      screenshot: ScreenshotSenderService(
+        baseUrl: 'https://example.com',
+        storage: FakeStorage(),
+      ),
+      storage: FakeStorage(),
+    );
+    socket.onScreenRecordStart = (_) async => true;
+    socket.onScreenRecordStop = (body) async => stops.add(body);
+    server.send(processing());
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  }
+
+  test(
+    'a failing agent session after reconnect keeps the connection',
+    () async {
+      await startRecordingCall();
+      server.failAgentSession = true;
+      final before = server.sockets.length;
+      await server.dropAll();
+      await Future<void>.delayed(const Duration(seconds: 6));
+
+      expect(
+        server.sockets.length,
+        before + 1,
+        reason: 'one reconnect, no loop',
+      );
+      expect(stops, isEmpty, reason: 'recording kept for the periodic check');
+    },
+  );
+
+  test('a drop during the session check keeps the grace cut-off', () async {
+    // Longer than the first retry (2s), so the reconnect and its session
+    // request happen while the grace timer is still pending.
+    WebitelSocket.recordingGrace = const Duration(seconds: 3);
+    await startRecordingCall();
+    server.dropOnAgentSession = true;
+    await server.dropAll();
+    await Future<void>.delayed(const Duration(seconds: 7));
+
+    expect(stops.map((s) => s['reason']), contains('network_loss_cleanup'));
   });
 
   test('concurrent authenticate calls share one challenge', () async {

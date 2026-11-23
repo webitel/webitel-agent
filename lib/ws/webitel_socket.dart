@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:webitel_desk_track/core/storage/interface.dart';
 
 import '../core/logger/logger.dart';
@@ -107,7 +108,8 @@ class WebitelSocket {
 
   // A WS drop does not stop the WebRTC recording: within this window the call
   // state is re-checked after reconnect instead of cutting the recording.
-  static const recordingGrace = Duration(seconds: 60);
+  @visibleForTesting
+  static Duration recordingGrace = const Duration(seconds: 60);
   Timer? _recordingGraceTimer;
 
   String? _recordingId;
@@ -211,7 +213,7 @@ class WebitelSocket {
       generation = _connection.generation;
       await authenticate();
       logger.info('[SOCKET] RECONNECT_SUCCESS');
-      await _resyncAfterReconnect();
+      await _resyncAfterReconnect(generation);
     } on AuthRejectedException catch (e) {
       logger.error('[SOCKET] RECONNECT_FAILED: $e');
       if (!_shutdown) onAuthRejected?.call();
@@ -596,6 +598,8 @@ class WebitelSocket {
     _failPending('Disconnected');
     _staleCallTimer?.cancel();
     _staleCallTimer = null;
+    _recoveryTimer?.cancel();
+    _recoveryTimer = null;
     _scheduleRetry();
   }
 
@@ -642,11 +646,15 @@ class WebitelSocket {
       );
       return;
     }
-    _recoveryAttempts[id] = attempts + 1;
     _recoveryTimer?.cancel();
     _recoveryTimer = Timer(Duration(seconds: 5 * (attempts + 1)), () async {
       _recoveryTimer = null;
       if (_shutdown || !_callHandler.screenRecordingActive) return;
+      if (_recordingId != id || !_recordingLost) return;
+      // Offline or waiting for a resync: don't spend an attempt, the resync
+      // after reconnect restarts it.
+      if (!_connection.isConnected || _recordingGraceTimer != null) return;
+      _recoveryAttempts[id] = attempts + 1;
       logger.warn(
         '[SOCKET] Restarting lost recording $id (attempt ${attempts + 1})',
       );
@@ -688,10 +696,14 @@ class WebitelSocket {
     onScreenRecordStop?.call({'reason': reason});
   }
 
-  Future<void> _resyncAfterReconnect() async {
+  Future<void> _resyncAfterReconnect(int generation) async {
     try {
       _resyncRecording(await getAgentSession());
     } catch (e) {
+      // Dropped again meanwhile: the grace timer of that drop stays in charge.
+      if (!_connection.isConnected || _connection.generation != generation) {
+        return;
+      }
       // The connection is authenticated and delivers events: keep it. Without a
       // session the call state can't be confirmed, so keep the recording and let
       // the periodic check decide.
@@ -741,6 +753,9 @@ class WebitelSocket {
       _staleCallTimer = null;
       return;
     }
+    // Requests made while offline would sit in the queue and go out first on
+    // the next connection, ahead of the auth challenge.
+    if (!_connection.isConnected) return;
     try {
       final session = await getAgentSession();
       if (!_isCallBusy(session)) {
