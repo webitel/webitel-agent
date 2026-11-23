@@ -15,7 +15,7 @@ A cross-platform desktop application for Webitel call-center agents. Streams the
 | **Periodic Screenshots** | Automatic screen captures uploaded to the server on a fixed interval |
 | **Audio Capture** | System loopback + microphone captured as separate RTP tracks (Windows) |
 | **OpenTelemetry** | Structured log export to an OTel collector |
-| **Tray Menu** | Upload a new config file without restarting the application |
+| **Tray Menu** | Agent status, upload a new config file without restarting, log out, close the app |
 
 ---
 
@@ -72,15 +72,15 @@ All three tracks are sent as RTP streams to the recording server (`StreamRecorde
 
 ## Configuration
 
-Place a `config.json` file in the OS application-support directory before first launch:
+The app reads `config.json` from its application-support directory. Without it the app starts
+in setup mode: use **Upload Configuration** in the system tray to pick the file; it is copied to
+the path below and loaded without a restart.
 
 | Platform | Path |
 | --- | --- |
-| Windows | `%APPDATA%\Webitel-Agent\config.json` |
-| macOS | `~/Library/Application Support/Webitel-Agent/config.json` |
-| Linux | `~/.config/Webitel-Agent/config.json` |
-
-Use **Upload configuration** in the system tray to reload the file without restarting.
+| Windows | `%APPDATA%\com.example\webitel_desk_track\config.json` |
+| macOS | `~/Library/Containers/com.example.webitelAgentFlutter/Data/Library/Application Support/com.example.webitelAgentFlutter/config.json` |
+| Linux | `~/.local/share/com.example.webitel_desk_track/config.json` |
 
 ### Example `config.json`
 
@@ -118,7 +118,7 @@ Use **Upload configuration** in the system tray to reload the file without resta
 | `telemetry.level` | string | `info` | Minimum log level: `debug`, `info`, `warn`, `error` |
 | `telemetry.console` | bool | `true` | Print logs to stdout |
 | `telemetry.file.enabled` | bool | `false` | Write logs to a file |
-| `telemetry.file.path` | string | — | Log file path (relative or absolute) |
+| `telemetry.file.path` | string | — | Log file path, relative to the user's Documents folder |
 | `telemetry.opentelemetry.enabled` | bool | `false` | Enable OTel export |
 | `telemetry.opentelemetry.endpoint` | string | — | OTel collector address (HTTP/gRPC) |
 | `telemetry.opentelemetry.serviceName` | string | — | Service name tag in the OTel export |
@@ -142,12 +142,26 @@ flutter build windows --release
 ./build_macos.sh
 ```
 
-FFmpeg binaries are bundled as Flutter assets (used for screenshots only):
+FFmpeg is used on macOS only (`assets/bin/macos/ffmpeg`); the Windows build does not use it.
 
-| Platform | Asset path |
-| --- | --- |
-| Windows | `assets/ffmpeg/windows/ffmpeg.exe` |
-| macOS | `assets/bin/macos/ffmpeg` |
+---
+
+## Windows Release
+
+Releases are published on GitHub with two installers: `.msi` and `.msix`.
+
+- **Build** — a `v*` tag triggers the Windows build in GitHub Actions; it produces the unsigned
+  app. No secrets or `.env` are needed.
+- **Signing** — every `.exe`/`.dll` inside the app, then the MSI and the MSIX, are signed with the
+  Webitel EV code-signing certificate (Certum, cloud). The key stays in Certum's HSM and each
+  signing session needs a one-time code from the SimplySign phone app, so signing and packaging
+  run on the release maintainer's machine, not in CI.
+- **Verification** — before a release is published, a Windows runner installs both installers
+  from the draft release and checks the signatures, install/uninstall, the upgrade over the
+  previous release and the MSIX install.
+- **MSIX users** — installers up to v1.1.38 were signed with a different certificate, so the
+  first Certum-signed MSIX is a new package: remove the old MSIX before installing it. The MSI
+  upgrades in place.
 
 ---
 
