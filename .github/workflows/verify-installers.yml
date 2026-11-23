@@ -1,0 +1,118 @@
+name: Verify installers
+run-name: Verify installers ${{ inputs.tag }}
+
+# Smoke-tests signed installers attached to a (draft) release before it is
+# published: Authenticode status of the MSI and of every installed exe/dll,
+# silent MSI install/uninstall, app start, MSI upgrade over the latest
+# published release, and MSIX install (Windows checks the package signature
+# and that the manifest Publisher matches the certificate).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (draft is fine) holding the .msi and .msix
+        required: true
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # needed to read draft releases
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}           # passed via env, never interpolated into scripts
+      EXPECTED_SIGNER: WEBITEL LLC
+    steps:
+      - name: Download installers
+        shell: pwsh
+        run: |
+          gh release download "$env:TAG" -R "$env:GITHUB_REPOSITORY" -D inst -p "*.msi" -p "*.msix"
+          Get-ChildItem inst | Format-Table Name, Length
+
+      - name: Installer signatures (MSI + MSIX)
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem inst -Recurse -Include *.msi,*.msix)
+          if ($files.Count -ne 2) { throw "expected one .msi and one .msix, got $($files.Count)" }
+          $fail = $false
+          foreach ($f in $files) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            "{0}`n  status:    {1}`n  signer:    {2}`n  issuer:    {3}`n  timestamp: {4}" -f $f.Name, $s.Status,
+              $s.SignerCertificate.Subject, $s.SignerCertificate.Issuer, $s.TimeStamperCertificate.Subject
+            if ($s.Status -ne 'Valid') { "::error::$($f.Name): signature $($s.Status) - $($s.StatusMessage)"; $fail = $true }
+            elseif ($s.SignerCertificate.Subject -notlike "CN=$env:EXPECTED_SIGNER,*") { "::error::$($f.Name): unexpected signer"; $fail = $true }
+            elseif (-not $s.TimeStamperCertificate) { "::error::$($f.Name): signature has no timestamp"; $fail = $true }
+          }
+          if ($fail) { throw "installer signature check failed" }
+          "installers signed by $env:EXPECTED_SIGNER and timestamped"
+
+      - name: MSI install, check files, uninstall
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem inst -Filter *.msi | Select-Object -First 1).FullName
+          $p = Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /l*v `"$PWD\msi-install.log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content msi-install.log -Tail 60; throw "msiexec install exit $($p.ExitCode)" }
+          $dir = "C:\Program Files\WebitelDeskTrack"
+          if (-not (Test-Path "$dir\webitel_desk_track.exe")) { throw "app not installed to $dir" }
+          $bad = Get-ChildItem $dir -Recurse -Include *.exe,*.dll |
+            ForEach-Object { $s = Get-AuthenticodeSignature $_.FullName; [pscustomobject]@{File=$_.Name; Status=$s.Status; Signer=$s.SignerCertificate.Subject.Split(',')[0]} } |
+            Tee-Object -Variable all |
+            Where-Object { $_.Status -ne 'Valid' -or $_.Signer -notin @("CN=$env:EXPECTED_SIGNER", 'CN=Microsoft Corporation') }
+          $all | Format-Table -AutoSize
+          if ($bad) { throw "unsigned, invalid or unexpectedly signed binaries: $($bad.File -join ', ')" }
+          $lnk = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Webitel Desk Track\Webitel Desk Track.lnk"
+          if (-not (Test-Path $lnk)) { Write-Warning "Start menu shortcut not found at $lnk" }
+          $proc = Start-Process "$dir\webitel_desk_track.exe" -PassThru
+          Start-Sleep -Seconds 15
+          if ($proc.HasExited) { Write-Warning "app exited after start with code $($proc.ExitCode)" } else { "app is running after 15s"; Stop-Process -Id $proc.Id -Force }
+          $p = Start-Process msiexec -ArgumentList "/x `"$msi`" /qn" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec uninstall exit $($p.ExitCode)" }
+          if (Test-Path "$dir\webitel_desk_track.exe") { throw "uninstall left the app in place" }
+          "MSI install/uninstall ok"
+
+      - name: MSI upgrade over the latest published release
+        shell: pwsh
+        run: |
+          gh release download -R "$env:GITHUB_REPOSITORY" -D prev -p "*.msi"
+          $old = (Get-ChildItem prev -Filter *.msi | Select-Object -First 1).FullName
+          $new = (Get-ChildItem inst -Filter *.msi | Select-Object -First 1).FullName
+          "old: $old"; "new: $new"
+          $p = Start-Process msiexec -ArgumentList "/i `"$old`" /qn" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "old MSI install exit $($p.ExitCode)" }
+          $p = Start-Process msiexec -ArgumentList "/i `"$new`" /qn /l*v `"$PWD\msi-upgrade.log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content msi-upgrade.log -Tail 60; throw "upgrade install exit $($p.ExitCode)" }
+          $arp = Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* |
+                 Where-Object DisplayName -like 'Webitel Desk Track*'
+          $arp | Format-Table DisplayName, DisplayVersion, PSChildName -AutoSize
+          if (@($arp).Count -ne 1) { throw "expected 1 installed product after upgrade, got $(@($arp).Count)" }
+          $exe = "C:\Program Files\WebitelDeskTrack\webitel_desk_track.exe"
+          if (-not (Test-Path $exe)) { Get-ChildItem "C:\Program Files\WebitelDeskTrack" -ErrorAction SilentlyContinue; throw "app files missing after upgrade" }
+          "exe file version after upgrade: $((Get-Item $exe).VersionInfo.FileVersion)"
+          $sig = Get-AuthenticodeSignature $exe
+          if ($sig.Status -ne 'Valid') { throw "upgraded exe signature is $($sig.Status)" }
+          $p = Start-Process msiexec -ArgumentList "/x `"$new`" /qn" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstall after upgrade exit $($p.ExitCode)" }
+          "MSI upgrade ok"
+
+      - name: MSIX install and remove
+        shell: pwsh
+        run: |
+          $msix = (Get-ChildItem inst -Filter *.msix | Select-Object -First 1).FullName
+          Add-AppxPackage -Path $msix
+          $pkg = Get-AppxPackage -Name webitel.desktrack
+          if (-not $pkg) { throw "MSIX not installed" }
+          $pkg | Format-List Name, Version, Publisher, SignatureKind, Status
+          Remove-AppxPackage -Package $pkg.PackageFullName
+          "MSIX install/remove ok"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verify-logs
+          path: |
+            msi-install.log
+            msi-upgrade.log
+          if-no-files-found: ignore
+          retention-days: 7
