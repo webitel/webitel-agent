@@ -15,7 +15,8 @@ A cross-platform desktop application for Webitel call-center agents. Streams the
 | **Periodic Screenshots** | Automatic screen captures uploaded to the server on a fixed interval |
 | **Audio Capture** | System loopback + microphone captured as separate RTP tracks (Windows) |
 | **OpenTelemetry** | Structured log export to an OTel collector |
-| **Tray Menu** | Agent status, upload a new config file without restarting, log out, close the app |
+| **Tray Menu** | Agent status, open the window, upload a new config file without restarting, log out, close the app |
+| **Runs in the tray** | Closing the window only hides it; recording, screenshots and the connection keep running. **Close** in the tray menu stops recordings and exits |
 
 ---
 
@@ -36,7 +37,10 @@ AppFlow (singleton)
 **Recording lifecycle:**
 
 - **Start** — `CallHandler` detects a call with `record_screen=true` → `RecordingManager._onStart`
-- **Stop** — socket stop signal, ICE Failed/Disconnected (10 s recovery window), or 1-hour safety timeout inside `StreamRecorder`
+- **Stop** — socket stop signal, or the 1-hour safety timeout inside `StreamRecorder`
+- **Connection drops** — a WebSocket drop does not stop the recording: after reconnect the agent
+  session decides whether the call is still going (60 s grace). A recorder that dies on its own
+  (ICE failure) is restarted up to 3 times while the call is active
 
 Key source paths:
 
