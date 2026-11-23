@@ -65,22 +65,31 @@ class AppFlow extends WindowListener {
     await _initializeWithToken(token);
   }
 
-  /// [PROTOCOL] Intercept close event to perform cleanup BEFORE exit
+  // The close button only hides the window: the agent keeps recording and
+  // reporting from the tray. A real exit goes through quit() (tray "Close").
   @override
   void onWindowClose() async {
-    logger.warn('[AppFlow] Close requested. Suspending exit for cleanup...');
+    logger.info('[AppFlow] Close requested. Hiding window to tray.');
+    // hide() also removes the taskbar button. setSkipTaskbar() must not be used:
+    // window_manager 0.4.x creates its ITaskbarList only in waitUntilReadyToShow(),
+    // so it dereferences a null pointer and kills the process (0xC0000005).
+    await windowManager.hide();
+  }
 
-    // [GUARD] Prevent immediate OS termination to allow async cleanup (WebRTC, Sockets, Uploads)
-    await windowManager.setPreventClose(true);
+  Future<void> showWindow() async {
+    if (!await windowManager.isVisible()) await windowManager.show();
+    await windowManager.focus();
+  }
 
+  // Stops recordings (finalizing them on the server), reports offline, exits.
+  Future<void> quit() async {
+    logger.warn('[AppFlow] Quit requested. Running cleanup before exit...');
     try {
-      // [LOGIC] Execute full cleanup sequence
-      await shutdown();
+      await shutdown().timeout(const Duration(seconds: 15));
       logger.info('[AppFlow] Cleanup successful. Terminating process.');
     } catch (e, st) {
-      logger.error('[AppFlow] Cleanup failed during close', e, st);
+      logger.error('[AppFlow] Cleanup failed during quit', e, st);
     } finally {
-      // [FINAL] Release the close lock and kill the process
       await windowManager.setPreventClose(false);
       exit(0);
     }
@@ -212,8 +221,7 @@ class AppFlow extends WindowListener {
 
     if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
       await windowManager.ensureInitialized();
-      if (!await windowManager.isVisible()) await windowManager.show();
-      await windowManager.focus();
+      await showWindow();
     }
 
     final loginService = LoginService(storage: _storage);
