@@ -12,7 +12,9 @@ class LoginService {
 
   /// Presents login WebView and returns true if login succeeded.
   /// Uses the injected storage to verify the token after WebView close.
-  Future<bool> performLogin() async {
+  // The WebView may still hold the rejected token in localStorage; it must not
+  // come back as a fresh login.
+  Future<bool> performLogin({String? rejectedToken}) async {
     try {
       final navigator = navigatorKey.currentState;
       if (navigator == null) {
@@ -32,7 +34,8 @@ class LoginService {
           builder:
               (_) => LoginWebView(
                 url: AppConfig.instance.loginUrl,
-                storage: _storage, // INJECTING STORAGE HERE - Fixes the error
+                storage: _storage,
+                rejectedToken: rejectedToken,
               ),
         ),
       );

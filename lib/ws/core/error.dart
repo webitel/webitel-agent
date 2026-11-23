@@ -24,11 +24,24 @@ class SocketError implements Exception {
   String toString() => '[$code] $status: $detail';
 
   Map<String, dynamic> toJson() {
-    return {
-      'code': code,
-      'id': id,
-      'status': status,
-      'detail': detail,
-    };
+    return {'code': code, 'id': id, 'status': status, 'detail': detail};
   }
+}
+
+// The server refused the access token: a new login is needed.
+class AuthRejectedException implements Exception {
+  final SocketError cause;
+  AuthRejectedException(this.cause);
+
+  @override
+  String toString() => 'Authentication rejected: $cause';
+}
+
+// The server could not be reached or did not answer: retry later, keep the token.
+class SocketUnavailableException implements Exception {
+  final String reason;
+  SocketUnavailableException(this.reason);
+
+  @override
+  String toString() => 'Socket unavailable: $reason';
 }

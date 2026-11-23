@@ -12,8 +12,14 @@ import 'package:webitel_desk_track/presentation/theme/text_style.dart';
 class LoginWebView extends StatefulWidget {
   final String url;
   final IStorageService storage;
+  final String? rejectedToken;
 
-  const LoginWebView({super.key, required this.url, required this.storage});
+  const LoginWebView({
+    super.key,
+    required this.url,
+    required this.storage,
+    this.rejectedToken,
+  });
 
   @override
   State<LoginWebView> createState() => _LoginWebViewState();
@@ -53,7 +59,10 @@ class _LoginWebViewState extends State<LoginWebView> {
   @override
   void initState() {
     super.initState();
-    widget.storage.readAccessToken().then((t) => _rejectedToken = t);
+    _rejectedToken = widget.rejectedToken;
+    if (_rejectedToken == null) {
+      widget.storage.readAccessToken().then((t) => _rejectedToken ??= t);
+    }
   }
 
   @override

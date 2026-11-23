@@ -18,6 +18,8 @@ class ScreenshotSenderService {
   Timer? _screenshotTimer;
 
   bool _serviceStarted = false;
+  // Bumped on stop(); a settings fetch from an older run must not re-arm timers.
+  int _runId = 0;
   bool _screenControlEnabled = false;
   Duration? _screenshotInterval;
   Duration? _currentTimerInterval;
@@ -35,6 +37,12 @@ class ScreenshotSenderService {
 
   /// Public getter for other services to check current permission state
   bool get isControlEnabled => _screenControlEnabled;
+
+  @visibleForTesting
+  bool get hasCaptureTimer => _screenshotTimer != null;
+
+  @visibleForTesting
+  Future<void> fetchSettingsForTest() => _fetchSettings();
 
   /// Starts the service and initiates background settings polling
   void start() {
@@ -54,6 +62,7 @@ class ScreenshotSenderService {
 
   /// Stops all background tasks and cleans up resources
   void stop() {
+    _runId++;
     _checkerTimer?.cancel();
     _stopScreenshotTimer();
     _checkerTimer = null;
@@ -79,6 +88,7 @@ class ScreenshotSenderService {
 
   /// Fetches latest agent configuration and screenshot intervals from API
   Future<void> _fetchSettings() async {
+    final runId = _runId;
     try {
       final token = await _storage.readAccessToken();
       if (token == null || token.isEmpty) return;
@@ -95,6 +105,7 @@ class ScreenshotSenderService {
         _fetchScreenshotInterval(token),
       ]);
 
+      if (!_serviceStarted || runId != _runId) return;
       _applySettings();
     } catch (e, st) {
       logger.error('[SCREENSHOT_SERVICE] Settings fetch failure', e, st);
@@ -199,16 +210,16 @@ class ScreenshotSenderService {
   }
 
   /// Triggers a screen capture and uploads it to the storage server.
-  /// Used for both automated timer-based captures and manual triggers.
-  Future<void> capture() async {
-    if (_screenshotInProgress) return;
+  /// Returns null on success, otherwise the reason it did not happen.
+  Future<String?> capture() async {
+    if (_screenshotInProgress) return 'Screenshot already in progress';
 
     final now = DateTime.now();
 
     // Guard: Prevent overlapping captures or rapid firing (debounce)
     if (_lastScreenshotAt != null &&
         now.difference(_lastScreenshotAt!) < _minScreenshotGap) {
-      return;
+      return 'Screenshot requested too soon after the previous one';
     }
 
     _screenshotInProgress = true;
@@ -222,7 +233,7 @@ class ScreenshotSenderService {
         logger.error(
           '[SCREENSHOT_SERVICE] Capture aborted: Missing authentication',
         );
-        return;
+        return 'Missing authentication';
       }
 
       // Generate standardized filename
@@ -234,7 +245,7 @@ class ScreenshotSenderService {
       if (defaultTargetPlatform == TargetPlatform.macOS) {
         if (!await ScreenCapturer.instance.isAccessAllowed()) {
           logger.warn('[SCREENSHOT_SERVICE] macOS permission denied');
-          return;
+          return 'Screen capture permission denied';
         }
         final dir = await getTemporaryDirectory();
         final path = '${dir.path}/$filename';
@@ -256,34 +267,36 @@ class ScreenshotSenderService {
 
       if (bytes == null || bytes.isEmpty) {
         logger.warn('[SCREENSHOT_SERVICE] Capture failed: Buffer is empty');
-        return;
+        return 'Screen capture returned no image';
       }
 
-      // Construct upload URI with query parameters
+      // The token goes in a header: query strings end up in proxy access logs
+      // and in http's ClientException messages, which we log.
       final uri = Uri.parse(
         '$baseUrl/api/storage/file/$agentId/upload',
       ).replace(
-        queryParameters: {
-          'channel': 'screenrecording',
-          'access_token': token,
-          'name': filename,
-        },
+        queryParameters: {'channel': 'screenrecording', 'name': filename},
       );
 
-      // Perform HTTP POST upload
       final response = await http
-          .post(uri, headers: {'Content-Type': 'image/png'}, body: bytes)
+          .post(
+            uri,
+            headers: {'Content-Type': 'image/png', 'X-Webitel-Access': token},
+            body: bytes,
+          )
           .timeout(const Duration(seconds: 30));
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         logger.info('[SCREENSHOT_SERVICE] Upload successful: $filename');
-      } else {
-        logger.error(
-          '[SCREENSHOT_SERVICE] Upload failed | Status: ${response.statusCode}',
-        );
+        return null;
       }
+      logger.error(
+        '[SCREENSHOT_SERVICE] Upload failed | Status: ${response.statusCode}',
+      );
+      return 'Screenshot upload failed with status ${response.statusCode}';
     } catch (e, st) {
       logger.error('[SCREENSHOT_SERVICE] Critical capture error', e, st);
+      return 'Screenshot failed: ${e.runtimeType}';
     } finally {
       _screenshotInProgress = false;
     }

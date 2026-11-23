@@ -11,6 +11,7 @@ import 'package:webitel_desk_track/core/storage/storage.dart';
 import 'package:webitel_desk_track/service/screenshot/sender.dart';
 import 'package:webitel_desk_track/service/tray/tray.dart';
 import 'package:webitel_desk_track/config/service.dart';
+import 'package:webitel_desk_track/ws/core/error.dart';
 import 'package:webitel_desk_track/ws/socket_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -34,6 +35,12 @@ class AppFlow extends WindowListener {
 
   // [GUARD] Track listener registration to prevent duplicate event triggers after re-login
   bool _isListenerRegistered = false;
+
+  // Bumped by shutdown(); an initialization that started before it must stop.
+  int _session = 0;
+  Future<void>? _relogin;
+  Timer? _initRetryTimer;
+  int _initRetries = 0;
 
   /// Entry point to start the application flow.
   Future<void> start() async {
@@ -111,55 +118,96 @@ class AppFlow extends WindowListener {
 
   /// Dependency Injection and Service Setup.
   Future<void> _initializeWithToken(String token) async {
-    try {
-      logger.info('[AppFlow] Initializing core modules...');
+    final session = _session;
+    _initRetryTimer?.cancel();
+    _initRetryTimer = null;
 
-      screenshotService ??= ScreenshotSenderService(
-        baseUrl: AppConfig.instance.baseUrl,
-        storage: _storage,
-      );
-      screenshotService!.start();
-
-      recordingManager ??= RecordingManager(storage: _storage);
-
-      socketManager ??= SocketManager(
-        baseUrl: AppConfig.instance.baseUrl,
-        wsUrl: AppConfig.instance.webitelWsUrl,
-        token: token,
-        storage: _storage,
-      );
-
-      final connected = await socketManager!.connectAndAuthenticate();
-
-      if (connected) {
-        final socket = socketManager!.socket;
-        socket.markAppInitialized();
-        socket.initServices(screenshot: screenshotService!, storage: _storage);
-        recordingManager!.attachSocket(socket);
-        TrayService.instance.attachSocket(socket);
-
-        _tokenWatcher ??= TokenWatcher(
+    final screenshot =
+        screenshotService ??= ScreenshotSenderService(
           baseUrl: AppConfig.instance.baseUrl,
-          onExpired: interactiveRelogin,
           storage: _storage,
         );
-        _tokenWatcher!.start();
+    final recorder = recordingManager ??= RecordingManager(storage: _storage);
+    final sockets =
+        socketManager ??= SocketManager(
+          baseUrl: AppConfig.instance.baseUrl,
+          wsUrl: AppConfig.instance.webitelWsUrl,
+          token: token,
+          storage: _storage,
+        );
 
-        status.value = AppStatus.ready;
-        logger.info('[AppFlow] All services are ready and connected.');
-      } else {
-        throw Exception('WebSocket authentication failed');
-      }
-    } catch (e, st) {
-      logger.error('[AppFlow] Critical initialization failure', e, st);
+    try {
+      logger.info('[AppFlow] Initializing core modules...');
+      await sockets.connectAndAuthenticate();
+    } on AuthRejectedException catch (e) {
+      if (session != _session) return;
+      logger.error('[AppFlow] Token rejected by server', e);
       status.value = AppStatus.failure;
       await interactiveRelogin();
+      return;
+    } catch (e, st) {
+      if (session != _session) return;
+      // Server unreachable (no VPN, Wi-Fi not up yet, server restart): keep the
+      // token and retry instead of parking an unattended PC on the login page.
+      logger.error('[AppFlow] Server unavailable, will retry', e, st);
+      status.value = AppStatus.failure;
+      _scheduleInitRetry(token);
+      return;
     }
+    if (session != _session) return;
+    _initRetries = 0;
+
+    final socket = sockets.socket;
+    try {
+      await socket.getAgentSession();
+    } catch (e) {
+      logger.warn('[AppFlow] Agent session not loaded yet: $e');
+    }
+    if (session != _session) return;
+
+    screenshot.start();
+    socket.markAppInitialized();
+    socket.initServices(screenshot: screenshot, storage: _storage);
+    recorder.attachSocket(socket);
+    TrayService.instance.attachSocket(socket);
+
+    _tokenWatcher ??= TokenWatcher(
+      baseUrl: AppConfig.instance.baseUrl,
+      onExpired: interactiveRelogin,
+      storage: _storage,
+    );
+    _tokenWatcher!.start();
+
+    status.value = AppStatus.ready;
+    logger.info('[AppFlow] All services are ready and connected.');
   }
 
-  Future<void> interactiveRelogin() async {
+  void _scheduleInitRetry(String token) {
+    _initRetries++;
+    final seconds = (5 * _initRetries).clamp(5, 60);
+    logger.info('[AppFlow] Retrying initialization in ${seconds}s');
+    _initRetryTimer?.cancel();
+    _initRetryTimer = Timer(Duration(seconds: seconds), () async {
+      _initRetryTimer = null;
+      final current = await _storage.readAccessToken();
+      if (current == null || current.isEmpty) return;
+      await _initializeWithToken(current);
+    });
+  }
+
+  // Every relogin trigger (token watcher, rejected token, tray) joins one flow.
+  Future<void> interactiveRelogin() {
+    return _relogin ??= _interactiveRelogin().whenComplete(
+      () => _relogin = null,
+    );
+  }
+
+  Future<void> _interactiveRelogin() async {
     logger.info('[AppFlow] Interactive relogin requested');
+    final rejectedToken = await _storage.readAccessToken();
     await _storage.deleteAccessToken();
+    // The next user on this PC may be a different agent.
+    await _storage.deleteAgentId();
     await shutdown();
 
     if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
@@ -169,7 +217,7 @@ class AppFlow extends WindowListener {
     }
 
     final loginService = LoginService(storage: _storage);
-    final ok = await loginService.performLogin();
+    final ok = await loginService.performLogin(rejectedToken: rejectedToken);
 
     if (ok) {
       await Future.delayed(const Duration(milliseconds: 800));
@@ -181,6 +229,9 @@ class AppFlow extends WindowListener {
   /// Clean teardown of all active instances.
   Future<void> shutdown() async {
     logger.info('[AppFlow] Performing graceful shutdown...');
+    _session++;
+    _initRetryTimer?.cancel();
+    _initRetryTimer = null;
 
     // [LOGIC] Keep the listener active for the next login session
     // Only remove if we are genuinely destroying the singleton, otherwise it's redundant
