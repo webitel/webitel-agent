@@ -210,9 +210,8 @@ class WebitelSocket {
       await connect();
       generation = _connection.generation;
       await authenticate();
-      final session = await getAgentSession();
-      _resyncRecording(session);
       logger.info('[SOCKET] RECONNECT_SUCCESS');
+      await _resyncAfterReconnect();
     } on AuthRejectedException catch (e) {
       logger.error('[SOCKET] RECONNECT_FAILED: $e');
       if (!_shutdown) onAuthRejected?.call();
@@ -232,9 +231,14 @@ class WebitelSocket {
   // AuthRejectedException: the server refused the token.
   // SocketUnavailableException: it could not be reached. Callers share one attempt.
   Future<void> authenticate() {
-    return _authFuture ??= _authenticate().whenComplete(
-      () => _authFuture = null,
-    );
+    final inFlight = _authFuture;
+    if (inFlight != null) return inFlight;
+    late final Future<void> attempt;
+    attempt = _authenticate().whenComplete(() {
+      if (identical(_authFuture, attempt)) _authFuture = null;
+    });
+    _authFuture = attempt;
+    return attempt;
   }
 
   Future<void> _authenticate() async {
@@ -528,7 +532,8 @@ class WebitelSocket {
       _pendingRequests.remove(currentSeq);
 
       // Retry logic: SocketError only, with exponential backoff.
-      if (e is SocketError && retryCount < 2) {
+      // code 0 is our own "Disconnected": retrying on the dead socket only delays.
+      if (e is SocketError && e.code != 0 && retryCount < 2) {
         final delay = Duration(milliseconds: 1000 * (retryCount + 1));
         await Future.delayed(delay);
         return _sendRawRequest(action, data, retryCount + 1);
@@ -639,18 +644,23 @@ class WebitelSocket {
     }
     _recoveryAttempts[id] = attempts + 1;
     _recoveryTimer?.cancel();
-    _recoveryTimer = Timer(const Duration(seconds: 5), () async {
+    _recoveryTimer = Timer(Duration(seconds: 5 * (attempts + 1)), () async {
       _recoveryTimer = null;
       if (_shutdown || !_callHandler.screenRecordingActive) return;
       logger.warn(
         '[SOCKET] Restarting lost recording $id (attempt ${attempts + 1})',
       );
       final ok = await onScreenRecordEnsure?.call({'root_id': id}) ?? false;
-      if (ok) _recordingLost = false;
+      if (ok) {
+        _recordingLost = false;
+      } else {
+        _scheduleRecovery();
+      }
     });
   }
 
   void _failPending(String reason) {
+    _authFuture = null;
     if (_authGate != null && !_authGate!.isCompleted) {
       _authGate!.completeError(
         SocketError(detail: reason, code: 0, id: '', status: 'FAIL'),
@@ -676,6 +686,26 @@ class WebitelSocket {
     _callHandler.clear();
     _clearRecordingTracking();
     onScreenRecordStop?.call({'reason': reason});
+  }
+
+  Future<void> _resyncAfterReconnect() async {
+    try {
+      _resyncRecording(await getAgentSession());
+    } catch (e) {
+      // The connection is authenticated and delivers events: keep it. Without a
+      // session the call state can't be confirmed, so keep the recording and let
+      // the periodic check decide.
+      logger.warn('[SOCKET] Agent session unavailable after reconnect: $e');
+      if (!_callHandler.screenRecordingActive) return;
+      _recordingGraceTimer?.cancel();
+      _recordingGraceTimer = null;
+      _scheduleRecovery();
+      _staleCallTimer?.cancel();
+      _staleCallTimer = Timer.periodic(
+        staleCallCheck,
+        (_) => _checkStaleCall(),
+      );
+    }
   }
 
   // Call events sent while the socket was down are lost, so after a reconnect

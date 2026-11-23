@@ -181,6 +181,26 @@ void main() {
     expect(ensured, ['call-1']);
   });
 
+  test('a failed restart of a lost recorder is retried', () async {
+    await socket.connect();
+    await socket.authenticate();
+    socket.initServices(
+      screenshot: ScreenshotSenderService(
+        baseUrl: 'https://example.com',
+        storage: FakeStorage(),
+      ),
+      storage: FakeStorage(),
+    );
+    var attempts = 0;
+    socket.onScreenRecordEnsure = (_) async => ++attempts >= 2;
+
+    server.send(processing());
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    socket.notifyRecordingLost('call-1');
+    await Future<void>.delayed(const Duration(milliseconds: 15500));
+    expect(attempts, 2, reason: 'retried once after a failure, then stopped');
+  });
+
   test('concurrent authenticate calls share one challenge', () async {
     await socket.connect();
     await Future.wait([socket.authenticate(), socket.authenticate()]);
