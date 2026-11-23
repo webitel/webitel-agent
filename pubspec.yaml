@@ -1,7 +1,7 @@
 name: webitel_desk_track
 description: "Webitel Desk Track Application"
 
-version: 1.0.0+2
+version: 1.1.39+3
 publish_to: none
 
 environment:
@@ -70,7 +70,10 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icons/
-    - assets/bin/macos/ffmpeg
+    # ffmpeg is only used by the macOS recorder; keep it out of Windows builds.
+    - path: assets/bin/macos/ffmpeg
+      platforms:
+        - macos
 
   fonts:
     - family: montserrat
