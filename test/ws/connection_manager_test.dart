@@ -103,6 +103,27 @@ void main() {
     expect(disconnects, 0);
   });
 
+  test(
+    'connect after dispose during a connect starts a fresh attempt',
+    () async {
+      server.acceptDelay = const Duration(milliseconds: 150);
+      final stale = manager.connect(server.url);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      manager.dispose();
+      stale.ignore();
+
+      server.acceptDelay = Duration.zero;
+      await manager.connect(server.url);
+      expect(manager.isConnected, isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(
+        manager.isConnected,
+        isTrue,
+        reason: 'the stale attempt must not tear it down',
+      );
+    },
+  );
+
   test('drop reports a disconnect', () async {
     await manager.connect(server.url);
     manager.drop('AUTH_FAILED');

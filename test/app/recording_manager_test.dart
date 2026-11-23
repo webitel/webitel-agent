@@ -98,6 +98,16 @@ void main() {
     expect(factory.created, hasLength(1));
   });
 
+  test('ensure starts only when nothing is recording', () async {
+    expect(await manager.ensure('call-a', type: RecordingType.screen), isTrue);
+    expect(await manager.ensure('call-a', type: RecordingType.screen), isTrue);
+    expect(factory.created, hasLength(1));
+
+    factory.created.single.onUnexpectedStop?.call('ice_failed');
+    expect(await manager.ensure('call-a', type: RecordingType.screen), isTrue);
+    expect(factory.created, hasLength(2));
+  });
+
   test('call and screen recordings are independent', () async {
     await manager.start('call-a', type: RecordingType.call);
     await manager.start('manual', type: RecordingType.screen);

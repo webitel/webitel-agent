@@ -14,6 +14,7 @@ class _FakeWebitel {
   late final HttpServer http;
   final sockets = <WebSocket>[];
   bool rejectAuth = false;
+  int authErrorCode = 401;
   String callChannelState = 'waiting';
   int authAttempts = 0;
 
@@ -38,7 +39,11 @@ class _FakeWebitel {
             jsonEncode({
               'seq_reply': seq,
               'status': 'FAIL',
-              'error': {'id': 'auth', 'status': 'Unauthorized', 'code': 401},
+              'error': {
+                'id': 'auth',
+                'status': 'Unauthorized',
+                'code': authErrorCode,
+              },
             }),
           );
         } else {
@@ -131,6 +136,51 @@ void main() {
     );
   });
 
+  test('a server error on auth is transient, not a rejected token', () async {
+    server.rejectAuth = true;
+    server.authErrorCode = 500;
+    await socket.connect();
+    await expectLater(
+      socket.authenticate(),
+      throwsA(isA<SocketUnavailableException>()),
+    );
+  });
+
+  test('a token refused on reconnect asks for a new login', () async {
+    var reloginRequests = 0;
+    socket.onAuthRejected = () => reloginRequests++;
+    await socket.connect();
+    await socket.authenticate();
+
+    server.rejectAuth = true;
+    await server.dropAll();
+    await Future<void>.delayed(const Duration(seconds: 6));
+    expect(reloginRequests, 1);
+  });
+
+  test('a lost recorder is restarted while the call is active', () async {
+    await socket.connect();
+    await socket.authenticate();
+    socket.initServices(
+      screenshot: ScreenshotSenderService(
+        baseUrl: 'https://example.com',
+        storage: FakeStorage(),
+      ),
+      storage: FakeStorage(),
+    );
+    final ensured = <String>[];
+    socket.onScreenRecordEnsure = (body) async {
+      ensured.add(body['root_id'] as String);
+      return true;
+    };
+
+    server.send(processing());
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    socket.notifyRecordingLost('call-1');
+    await Future<void>.delayed(const Duration(milliseconds: 5500));
+    expect(ensured, ['call-1']);
+  });
+
   test('concurrent authenticate calls share one challenge', () async {
     await socket.connect();
     await Future.wait([socket.authenticate(), socket.authenticate()]);
@@ -183,8 +233,10 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
       server.callChannelState = 'processing';
+      final before = server.sockets.length;
       await server.dropAll();
       await Future<void>.delayed(const Duration(seconds: 3));
+      expect(server.sockets.length, before + 1, reason: 'reconnected');
       expect(stops, isEmpty);
     },
   );

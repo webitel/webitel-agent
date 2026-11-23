@@ -18,6 +18,7 @@ class WsConnectionManager {
   bool _isConnected = false;
   bool _isDisposed = false;
   int _retryCount = 0;
+  int _generation = 0;
 
   final void Function(dynamic message) onMessage;
   final void Function() onDisconnected;
@@ -34,6 +35,10 @@ class WsConnectionManager {
 
   bool get isConnected => _isConnected;
 
+  // Changes with every new channel, so a caller can drop only the connection
+  // it established and not a newer one.
+  int get generation => _generation;
+
   Future<void> get ready async {
     if (_isDisposed || _isConnected) return;
     await _connecting;
@@ -42,13 +47,22 @@ class WsConnectionManager {
   Future<void> connect(String url) {
     if (_isConnected) return Future.value();
     _isDisposed = false;
-    return _connecting ??= _connect(url).whenComplete(() => _connecting = null);
+    final inFlight = _connecting;
+    if (inFlight != null) return inFlight;
+
+    late final Future<void> attempt;
+    attempt = _connect(url).whenComplete(() {
+      if (identical(_connecting, attempt)) _connecting = null;
+    });
+    _connecting = attempt;
+    return attempt;
   }
 
   Future<void> _connect(String url) async {
     logger.info('[WS_CONN] ATTEMPT_CONNECT: $url');
     final channel = _connector(Uri.parse(url));
     _channel = channel;
+    _generation++;
 
     _subscription = channel.stream.listen(
       (msg) {
@@ -104,6 +118,8 @@ class WsConnectionManager {
     logger.warn('[WS_CONN] DISCONNECTED | $reason');
 
     _isConnected = false;
+    // The attempt that owned this channel is dead; the next connect() starts a new one.
+    _connecting = null;
 
     _subscription?.cancel();
     _subscription = null;

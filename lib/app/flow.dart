@@ -17,6 +17,8 @@ import 'package:window_manager/window_manager.dart';
 
 enum AppStatus { idle, authenticating, ready, failure }
 
+enum _InitResult { ready, tokenRejected, retrying, aborted }
+
 class AppFlow extends WindowListener {
   // [LOGIC] Private constructor for Singleton pattern
   AppFlow._();
@@ -62,7 +64,9 @@ class AppFlow extends WindowListener {
       return;
     }
 
-    await _initializeWithToken(token);
+    if (await _initializeWithToken(token) == _InitResult.tokenRejected) {
+      await interactiveRelogin();
+    }
   }
 
   // The close button only hides the window: the agent keeps recording and
@@ -126,7 +130,9 @@ class AppFlow extends WindowListener {
   }
 
   /// Dependency Injection and Service Setup.
-  Future<void> _initializeWithToken(String token) async {
+  // Never starts a relogin itself: a relogin calls this, so awaiting one here
+  // would wait on itself forever.
+  Future<_InitResult> _initializeWithToken(String token) async {
     final session = _session;
     _initRetryTimer?.cancel();
     _initRetryTimer = null;
@@ -149,21 +155,20 @@ class AppFlow extends WindowListener {
       logger.info('[AppFlow] Initializing core modules...');
       await sockets.connectAndAuthenticate();
     } on AuthRejectedException catch (e) {
-      if (session != _session) return;
+      if (session != _session) return _InitResult.aborted;
       logger.error('[AppFlow] Token rejected by server', e);
       status.value = AppStatus.failure;
-      await interactiveRelogin();
-      return;
+      return _InitResult.tokenRejected;
     } catch (e, st) {
-      if (session != _session) return;
+      if (session != _session) return _InitResult.aborted;
       // Server unreachable (no VPN, Wi-Fi not up yet, server restart): keep the
       // token and retry instead of parking an unattended PC on the login page.
       logger.error('[AppFlow] Server unavailable, will retry', e, st);
       status.value = AppStatus.failure;
-      _scheduleInitRetry(token);
-      return;
+      _scheduleInitRetry();
+      return _InitResult.retrying;
     }
-    if (session != _session) return;
+    if (session != _session) return _InitResult.aborted;
     _initRetries = 0;
 
     final socket = sockets.socket;
@@ -172,13 +177,14 @@ class AppFlow extends WindowListener {
     } catch (e) {
       logger.warn('[AppFlow] Agent session not loaded yet: $e');
     }
-    if (session != _session) return;
+    if (session != _session) return _InitResult.aborted;
 
     screenshot.start();
     socket.markAppInitialized();
     socket.initServices(screenshot: screenshot, storage: _storage);
     recorder.attachSocket(socket);
     TrayService.instance.attachSocket(socket);
+    socket.onAuthRejected = interactiveRelogin;
 
     _tokenWatcher ??= TokenWatcher(
       baseUrl: AppConfig.instance.baseUrl,
@@ -189,9 +195,11 @@ class AppFlow extends WindowListener {
 
     status.value = AppStatus.ready;
     logger.info('[AppFlow] All services are ready and connected.');
+    return _InitResult.ready;
   }
 
-  void _scheduleInitRetry(String token) {
+  void _scheduleInitRetry() {
+    final session = _session;
     _initRetries++;
     final seconds = (5 * _initRetries).clamp(5, 60);
     logger.info('[AppFlow] Retrying initialization in ${seconds}s');
@@ -199,8 +207,10 @@ class AppFlow extends WindowListener {
     _initRetryTimer = Timer(Duration(seconds: seconds), () async {
       _initRetryTimer = null;
       final current = await _storage.readAccessToken();
-      if (current == null || current.isEmpty) return;
-      await _initializeWithToken(current);
+      if (session != _session || current == null || current.isEmpty) return;
+      if (await _initializeWithToken(current) == _InitResult.tokenRejected) {
+        await interactiveRelogin();
+      }
     });
   }
 
@@ -224,13 +234,22 @@ class AppFlow extends WindowListener {
       await showWindow();
     }
 
-    final loginService = LoginService(storage: _storage);
-    final ok = await loginService.performLogin(rejectedToken: rejectedToken);
+    var rejected = rejectedToken;
+    while (true) {
+      final loginService = LoginService(storage: _storage);
+      final ok = await loginService.performLogin(rejectedToken: rejected);
+      if (!ok) return;
 
-    if (ok) {
       await Future.delayed(const Duration(milliseconds: 800));
       final newToken = await _storage.readAccessToken();
-      if (newToken != null) await _initializeWithToken(newToken);
+      if (newToken == null) return;
+      if (await _initializeWithToken(newToken) != _InitResult.tokenRejected) {
+        return;
+      }
+      // The server refused the token the login just produced: log in again.
+      rejected = newToken;
+      await _storage.deleteAccessToken();
+      await shutdown();
     }
   }
 
@@ -244,16 +263,21 @@ class AppFlow extends WindowListener {
     // [LOGIC] Keep the listener active for the next login session
     // Only remove if we are genuinely destroying the singleton, otherwise it's redundant
 
-    screenshotService?.stop();
+    // Detach before awaiting so an init starting meanwhile builds fresh ones.
+    final screenshot = screenshotService;
+    final recorder = recordingManager;
+    final sockets = socketManager;
     screenshotService = null;
+    recordingManager = null;
+    socketManager = null;
+
+    screenshot?.stop();
 
     // [GUARD] Critical: Stops WebRTC streams and finishes file writing
-    await recordingManager?.stopAllAndUpload();
-    recordingManager = null;
+    await recorder?.stopAllAndUpload();
 
     // [LOGIC] Sends 'offline' state to server before closing
-    await socketManager?.disconnect();
-    socketManager = null;
+    await sockets?.disconnect();
 
     _tokenWatcher?.stop();
     _tokenWatcher = null;

@@ -34,18 +34,34 @@ class RecordingManager {
     logger.info('[RecordingManager] Binding to socket events');
     _socket = socket;
 
-    socket.onScreenRecordStart = (body) {
-      final rootId =
-          body['root_id']?.toString() ??
-          'session_${DateTime.now().millisecondsSinceEpoch}';
-      final type =
-          body.containsKey('call_id')
-              ? RecordingType.call
-              : RecordingType.screen;
-      return start(rootId, type: type);
-    };
-
+    socket.onScreenRecordStart =
+        (body) => start(_idOf(body), type: _typeOf(body));
+    socket.onScreenRecordEnsure =
+        (body) => ensure(_idOf(body), type: _typeOf(body));
     socket.onScreenRecordStop = (body) => stopAll('socket_signal');
+  }
+
+  String _idOf(Map<String, dynamic> body) =>
+      body['root_id']?.toString() ??
+      'session_${DateTime.now().millisecondsSinceEpoch}';
+
+  RecordingType _typeOf(Map<String, dynamic> body) =>
+      body.containsKey('call_id') ? RecordingType.call : RecordingType.screen;
+
+  // Starts a recording of [type] only when none is running.
+  Future<bool> ensure(String id, {required RecordingType type}) {
+    final completer = Completer<bool>();
+    _enqueue(type, () async {
+      try {
+        completer.complete(
+          _recorders[type] != null ? true : await _start(id, type),
+        );
+      } catch (_) {
+        completer.complete(false);
+        rethrow;
+      }
+    });
+    return completer.future;
   }
 
   Future<bool> start(String id, {required RecordingType type}) {
@@ -71,6 +87,7 @@ class RecordingManager {
     _closed = true;
     if (_socket != null) {
       _socket!.onScreenRecordStart = null;
+      _socket!.onScreenRecordEnsure = null;
       _socket!.onScreenRecordStop = null;
       _socket = null;
     }
@@ -108,6 +125,10 @@ class RecordingManager {
       if (!identical(_recorders[type], recorder)) return;
       logger.warn('[RecordingManager] $type session $id ended: $reason');
       _recorders[type] = null;
+      // The 1h safety timeout exists to end ghost recordings: never restart those.
+      if (!_closed && reason != 'safety_timeout') {
+        _socket?.notifyRecordingLost(id);
+      }
     };
     _recorders[type] = recorder;
 

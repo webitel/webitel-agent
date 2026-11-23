@@ -59,8 +59,9 @@ class NotificationHandler {
         case NotificationAction.screenshot:
           // [LOGIC] Triggers an immediate desktop screenshot
           final service = screenshotService;
-          if (service == null)
+          if (service == null) {
             throw Exception('Screenshot service unavailable');
+          }
           final result = await service.capture();
           if (result != null) throw Exception(result);
           break;
@@ -126,6 +127,10 @@ class NotificationHandler {
 
   /// Initializes a WebRTC screen sharing session.
   Future<void> _handleScreenShare(Map<String, dynamic> notif) async {
+    // Between a relogin and initServices() events still reach this disposed
+    // handler: refuse instead of accepting and immediately closing the share.
+    if (_disposed) throw Exception('Agent session is not ready');
+
     // [GUARD] Close existing capturer before starting a new stream
     final generation = ++_shareGeneration;
     _screenCapturer?.close('NEW_SHARE_REQUEST');
@@ -136,7 +141,9 @@ class NotificationHandler {
       notif: notif,
       logger: logger,
       onClose: () {
-        if (identical(_screenCapturer, streamer)) _screenCapturer = null;
+        if (identical(_screenCapturer, streamer)) {
+          _screenCapturer = null;
+        }
       },
       onAccept: requestExecutor,
     );
