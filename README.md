@@ -78,7 +78,9 @@ All three tracks are sent as RTP streams to the recording server (`StreamRecorde
 
 The app reads `config.json` from its application-support directory. Without it the app starts
 in setup mode: use **Upload Configuration** in the system tray to pick the file; it is copied to
-the path below and loaded without a restart.
+the path below. Uploading a config restarts the app's services with it, no relaunch needed; if
+it points to a different server, the agent is signed out and the login page for that server
+opens.
 
 | Platform | Path |
 | --- | --- |

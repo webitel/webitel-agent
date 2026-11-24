@@ -52,6 +52,21 @@ class AppConfig {
   }
 
   /// Saves the provided JSON map to the local config file and updates cache.
+  // Whether two configured server URLs point at the same environment.
+  static bool sameServer(String a, String b) {
+    String normalize(String url) {
+      final uri = Uri.tryParse(url.trim());
+      if (uri == null || uri.host.isEmpty) {
+        return url.trim().toLowerCase().replaceAll(RegExp(r'/+$'), '');
+      }
+      final path = uri.path.replaceAll(RegExp(r'/+$'), '');
+      return '${uri.scheme.toLowerCase()}://${uri.host.toLowerCase()}'
+          '${uri.hasPort ? ':${uri.port}' : ''}$path';
+    }
+
+    return normalize(a) == normalize(b);
+  }
+
   static Future<void> save(Map<String, dynamic> json) async {
     try {
       final file = await _getConfigFile(null);

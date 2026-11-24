@@ -32,6 +32,8 @@ class AppInitializer {
     // 3. System Tray Initialization
     // [LOGIC] Pass storage directly for consistent auth handling
     await TrayService.init(AppFlow.instance.storage);
+    _activeBaseUrl = config?.baseUrl;
+    TrayService.instance.onConfigUploaded = _applyUploadedConfig;
 
     if (config != null) {
       // 4. Heavy services setup (FFmpeg)
@@ -46,19 +48,30 @@ class AppInitializer {
     } else {
       // 5. Fallback if config is missing (fresh install)
       runApp(const MissingConfigRoot());
-
-      TrayService.instance.onConfigUploaded = () async {
-        final uploaded = await AppConfig.load();
-        if (uploaded != null) {
-          await logger.init(uploaded);
-          _restartApp();
-        } else {
-          logger.error(
-            '[AppInitializer] Config upload detected but failed to load',
-          );
-        }
-      };
     }
+  }
+
+  static String? _activeBaseUrl;
+
+  // Every upload restarts the services: they hold the server URLs and the
+  // connection of the config they started with. A different server is another
+  // environment, where the stored token and agent id mean nothing: drop them so
+  // the agent signs in there.
+  static Future<void> _applyUploadedConfig() async {
+    final uploaded = await AppConfig.load();
+    if (uploaded == null) {
+      logger.error(
+        '[AppInitializer] Config upload detected but failed to load',
+      );
+      return;
+    }
+    await logger.init(uploaded);
+
+    final previous = _activeBaseUrl;
+    final serverChanged =
+        previous != null && !AppConfig.sameServer(previous, uploaded.baseUrl);
+    _activeBaseUrl = uploaded.baseUrl;
+    await _restartApp(clearSession: serverChanged);
   }
 
   // Sets Windows "Communications" audio ducking to "Do nothing" so that
@@ -71,15 +84,20 @@ class AppInitializer {
       final result = Process.runSync('reg', [
         'add',
         r'HKCU\SOFTWARE\Microsoft\Multimedia\Audio\Communications',
-        '/v', 'DuckingPreference',
-        '/t', 'REG_DWORD',
-        '/d', '3',
+        '/v',
+        'DuckingPreference',
+        '/t',
+        'REG_DWORD',
+        '/d',
+        '3',
         '/f',
       ]);
       if (result.exitCode == 0) {
         logger.info('[AppInitializer] Audio ducking disabled');
       } else {
-        logger.warn('[AppInitializer] reg exited ${result.exitCode}: ${result.stderr}');
+        logger.warn(
+          '[AppInitializer] reg exited ${result.exitCode}: ${result.stderr}',
+        );
       }
     } catch (e) {
       logger.warn('[AppInitializer] Failed to disable audio ducking: $e');
@@ -87,10 +105,17 @@ class AppInitializer {
   }
 
   /// Gracefully shuts down existing instances before re-running flow.
-  static Future<void> _restartApp() async {
+  static Future<void> _restartApp({bool clearSession = false}) async {
     logger.warn('[AppInitializer] Restarting application...');
 
     await AppFlow.instance.shutdown();
+    if (clearSession) {
+      logger.info('[AppInitializer] Server changed: signing out');
+      await AppFlow.instance.storage.deleteAccessToken();
+      await AppFlow.instance.storage.deleteAgentId();
+      // The login page is coming; the window may be hidden in the tray.
+      await AppFlow.instance.showWindow();
+    }
 
     runApp(const AppRoot());
 
