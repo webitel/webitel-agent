@@ -263,6 +263,24 @@ void main() {
     expect(handler.screenRecordingActive, isFalse);
   });
 
+  test('post-processing of an unrecorded call does not switch recording '
+      'on', () {
+    call(_call('update', recordScreen: false));
+    call(_call('hangup', recordScreen: false));
+    channel(_channel('processing'));
+    expect(handler.screenRecordingActive, isFalse);
+    expect(handler.postProcessing, isEmpty);
+    channel(_channel('waiting'));
+    expect(updates, isEmpty, reason: 'no stop that could kill a manual one');
+  });
+
+  test('a recorded call during unrecorded post-processing starts '
+      'recording', () {
+    channel(_channel('processing', attemptId: 1));
+    call(_call('update', id: _otherCallId));
+    expect(updates, [(true, _otherCallId)]);
+  });
+
   test('processing during a recorded call without distribute still keeps '
       'the recording until it ends', () {
     call(_call('update'));

@@ -133,10 +133,16 @@ void main() {
     await server.close();
   });
 
-  // A channel event that puts the agent into post-processing: recording active.
-  Map<String, dynamic> processing() => {
-    'event': 'channel',
-    'data': {'status': 'processing', 'attempt_id': '42'},
+  // A recorded call: recording active.
+  Map<String, dynamic> recordedCall() => {
+    'event': 'call',
+    'data': {
+      'call': {
+        'id': 'call-1',
+        'event': 'active',
+        'data': {'record_screen': true},
+      },
+    },
   };
 
   test('authentication succeeds on an OK reply', () async {
@@ -193,7 +199,7 @@ void main() {
       return true;
     };
 
-    server.send(processing());
+    server.send(recordedCall());
     await Future<void>.delayed(const Duration(milliseconds: 100));
     socket.notifyRecordingLost('call-1');
     await Future<void>.delayed(const Duration(milliseconds: 5500));
@@ -213,7 +219,7 @@ void main() {
     var attempts = 0;
     socket.onScreenRecordEnsure = (_) async => ++attempts >= 2;
 
-    server.send(processing());
+    server.send(recordedCall());
     await Future<void>.delayed(const Duration(milliseconds: 100));
     socket.notifyRecordingLost('call-1');
     await Future<void>.delayed(const Duration(milliseconds: 15500));
@@ -232,7 +238,7 @@ void main() {
     );
     socket.onScreenRecordStart = (_) async => true;
     socket.onScreenRecordStop = (body) async => stops.add(body);
-    server.send(processing());
+    server.send(recordedCall());
     await Future<void>.delayed(const Duration(milliseconds: 100));
   }
 
@@ -287,7 +293,7 @@ void main() {
     socket.onScreenRecordStart = (_) async => true;
     socket.onScreenRecordStop = (body) async => stops.add(body);
 
-    server.send(processing());
+    server.send(recordedCall());
     await Future<void>.delayed(const Duration(milliseconds: 100));
 
     await server.dropAll();
@@ -314,7 +320,7 @@ void main() {
       socket.onScreenRecordStart = (_) async => true;
       socket.onScreenRecordStop = (body) async => stops.add(body);
 
-      server.send(processing());
+      server.send(recordedCall());
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
       if (busyChannel == 'call') {

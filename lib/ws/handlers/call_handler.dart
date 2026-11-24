@@ -355,13 +355,19 @@ class CallHandler {
         logger.info(
           '[CHANNEL_EVENT] ✔ Post-processing confirmed | attempt=$attemptId',
         );
-      } else {
+      } else if (_activeCalls.isNotEmpty) {
         _postProcessing.add({
           'attempt_id': attemptId,
           'is_pre_registered': false,
         });
         logger.info(
           '[CHANNEL_EVENT] ⚡ Late post-processing registration | attempt=$attemptId',
+        );
+      } else {
+        // Post-processing of a call that was not recorded must not flip the
+        // state on: it would block the next recorded call and stop manual ones.
+        logger.debug(
+          '[CHANNEL_EVENT] Processing for untracked attempt=$attemptId — ignored',
         );
       }
     }
