@@ -741,9 +741,11 @@ class WebitelSocket {
   }
 
   bool _isCallBusy(AgentSession session) {
+    // Manual outbound calls and their post-processing live on 'out_call'.
+    const callChannels = {'call', 'out_call'};
     const idleStates = {'waiting', 'missed', 'wrap_time', 'idle'};
     return session.channels
-        .where((c) => c.channel == 'call')
+        .where((c) => callChannels.contains(c.channel))
         .any((c) => !idleStates.contains(c.state));
   }
 

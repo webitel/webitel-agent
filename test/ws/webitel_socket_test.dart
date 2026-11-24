@@ -18,6 +18,7 @@ class _FakeWebitel {
   bool failAgentSession = false;
   bool dropOnAgentSession = false;
   String callChannelState = 'waiting';
+  String outCallChannelState = 'waiting';
   int authAttempts = 0;
 
   Future<void> start() async {
@@ -74,6 +75,7 @@ class _FakeWebitel {
               'agent_id': 7,
               'channels': [
                 {'channel': 'call', 'state': callChannelState},
+                {'channel': 'out_call', 'state': outCallChannelState},
               ],
             },
           }),
@@ -297,9 +299,9 @@ void main() {
     expect(stops.map((s) => s['reason']), ['call_ended_while_disconnected']);
   });
 
-  test(
-    'a WS drop during an ongoing call does not stop the recording',
-    () async {
+  for (final busyChannel in ['call', 'out_call']) {
+    test('a WS drop while $busyChannel is busy does not stop the '
+        'recording', () async {
       await socket.connect();
       await socket.authenticate();
       socket.initServices(
@@ -315,14 +317,18 @@ void main() {
       server.send(processing());
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
-      server.callChannelState = 'processing';
+      if (busyChannel == 'call') {
+        server.callChannelState = 'processing';
+      } else {
+        server.outCallChannelState = 'processing';
+      }
       final before = server.sockets.length;
       await server.dropAll();
       await Future<void>.delayed(const Duration(seconds: 3));
       expect(server.sockets.length, before + 1, reason: 'reconnected');
       expect(stops, isEmpty);
-    },
-  );
+    });
+  }
 
   test('nothing reconnects after disconnect', () async {
     await socket.connect();
