@@ -8,8 +8,8 @@ The usual culprits, in order:
 
 1. **Missing Microsoft Edge WebView2 Runtime** — login window is blank / app
    won't get past sign-in.
-2. **Missing Visual C++ Redistributable** — app won't launch at all
-   (missing-DLL error).
+2. **Missing Visual C++ Redistributable** (only v1.1.39–v1.1.42) — app won't
+   launch at all (missing-DLL error).
 3. **Antivirus / EDR** quarantining the installer or `webitel_desk_track.exe`.
 4. **SmartScreen / AppLocker / WDAC / MSIX sideloading** policy.
 
@@ -41,11 +41,16 @@ empty and never reaches the Webitel auth page.
 
 ## 2. Visual C++ Redistributable
 
-The native WebRTC / plugin DLLs need the **Microsoft Visual C++ 2015–2022
-Redistributable (x64)**. Without it the app fails to start with a
-`VCRUNTIME140.dll` / `MSVCP140.dll` missing error.
+The app and its native WebRTC / plugin DLLs need the Visual C++ runtime
+(`MSVCP140.dll`, `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll`). Since v1.1.43 both
+installers ship it next to `webitel_desk_track.exe`, so nothing extra is needed.
+The installers of v1.1.39–v1.1.42 (and every MSI before them) did not: on a
+machine without the **Microsoft Visual C++ 2015–2022 Redistributable (x64)** the
+app fails to start with a `VCRUNTIME140.dll` / `MSVCP140.dll` missing error.
 
-Install: **Microsoft Visual C++ Redistributable (x64)** —
+Fix: update to v1.1.43 or later, or install the redistributable:
+
+**Microsoft Visual C++ Redistributable (x64)** —
 <https://aka.ms/vs/17/release/vc_redist.x64.exe>
 
 Symptom when missing: the app doesn't open at all; Windows shows a missing-DLL
