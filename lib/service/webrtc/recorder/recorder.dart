@@ -20,6 +20,11 @@ class StreamRecorder implements RecorderI {
   String? _sessionID;
   bool _isStopping = false;
   Timer? _maxDurationTimer;
+  Future<void>? _startFuture;
+  Future<void>? _stopFuture;
+
+  @override
+  void Function(String reason)? onUnexpectedStop;
 
   StreamRecorder({
     required this.callId,
@@ -30,7 +35,13 @@ class StreamRecorder implements RecorderI {
   }) : _storage = storage;
 
   @override
-  Future<void> start({required String recordingId}) async {
+  Future<void> start({required String recordingId}) {
+    // stop() waits for this future, so a stop during start always sees and
+    // releases whatever start has opened (capture, peer connection, server stream).
+    return _startFuture = _start(recordingId);
+  }
+
+  Future<void> _start(String recordingId) async {
     await _cleanupInternal();
     _isStopping = false;
 
@@ -39,7 +50,7 @@ class StreamRecorder implements RecorderI {
 
     _maxDurationTimer = Timer(const Duration(hours: 1), () {
       logger.warn('[StreamRecorder] SAFETY_TIMEOUT reached. Force stopping.');
-      stop();
+      _stopUnexpectedly('safety_timeout');
     });
 
     try {
@@ -58,7 +69,7 @@ class StreamRecorder implements RecorderI {
           logger.error(
             '[StreamRecorder] ICE Failed. Permanent transport loss.',
           );
-          stop();
+          _stopUnexpectedly('ice_failed');
         }
 
         if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
@@ -68,15 +79,15 @@ class StreamRecorder implements RecorderI {
           );
 
           Future.delayed(const Duration(seconds: 10), () {
-            // Check if it's still disconnected after 10 seconds
-            if (pc?.iceConnectionState ==
+            if (!identical(pc, currentPc)) return;
+            if (currentPc.iceConnectionState ==
                     RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
-                pc?.iceConnectionState ==
+                currentPc.iceConnectionState ==
                     RTCIceConnectionState.RTCIceConnectionStateFailed) {
               logger.warn(
                 '[StreamRecorder] ICE recovery timeout. Closing session.',
               );
-              stop();
+              _stopUnexpectedly('ice_disconnected');
             }
           });
         }
@@ -93,13 +104,17 @@ class StreamRecorder implements RecorderI {
 
       for (final stream in streams) {
         for (final track in stream.getTracks()) {
-          logger.debug('[StreamRecorder] Adding track: kind=${track.kind} id=${track.id} enabled=${track.enabled}');
+          logger.debug(
+            '[StreamRecorder] Adding track: kind=${track.kind} id=${track.id} enabled=${track.enabled}',
+          );
           final sender = await currentPc.addTrack(track, stream);
           if (track.kind == 'video') await _configureVideoEncoding(sender);
         }
       }
 
-      logger.debug('[StreamRecorder] Streams: ${streams.length}, total tracks: ${streams.fold(0, (n, s) => n + s.getTracks().length)}');
+      logger.debug(
+        '[StreamRecorder] Streams: ${streams.length}, total tracks: ${streams.fold(0, (n, s) => n + s.getTracks().length)}',
+      );
 
       final offer = await currentPc.createOffer();
       if (_isStopping) return;
@@ -127,8 +142,9 @@ class StreamRecorder implements RecorderI {
         storage: _storage,
       );
 
-      if (_isStopping) return;
+      // Keep the id even when stopping: cleanup must DELETE the server stream.
       _sessionID = response.streamId;
+      if (_isStopping) return;
       await currentPc.setRemoteDescription(response.answer);
 
       logger.info('[StreamRecorder] Established Session: $_sessionID');
@@ -155,13 +171,23 @@ class StreamRecorder implements RecorderI {
   }
 
   @override
-  Future<void> stop() async {
-    if (_isStopping) return;
+  Future<void> stop() => _stopFuture ??= _stop();
+
+  Future<void> _stop() async {
     _isStopping = true;
     _maxDurationTimer?.cancel();
     logger.info('[StreamRecorder] Terminating session for $callId');
+    try {
+      await _startFuture;
+    } catch (_) {}
     await _logVideoStats();
     await _cleanupInternal();
+  }
+
+  void _stopUnexpectedly(String reason) {
+    if (_isStopping) return;
+    logger.warn('[StreamRecorder] Stopped on its own: $reason');
+    stop().whenComplete(() => onUnexpectedStop?.call(reason));
   }
 
   Future<void> _logVideoStats() async {
@@ -177,11 +203,15 @@ class StreamRecorder implements RecorderI {
           final rtpTs = v['rtpTimestamp'] ?? v['timestamp'];
           final frames = v['framesSent'];
           final packets = v['packetsSent'];
-          logger.debug('[StreamRecorder] VideoStats: rtpTimestamp=$rtpTs framesSent=$frames packetsSent=$packets');
+          logger.debug(
+            '[StreamRecorder] VideoStats: rtpTimestamp=$rtpTs framesSent=$frames packetsSent=$packets',
+          );
           // rtpTimestamp/90000 = RTP duration in seconds — compare to actual session duration
           if (rtpTs != null) {
             final rtpSec = (rtpTs as num) / 90000.0;
-            logger.debug('[StreamRecorder] VideoStats: RTP duration=${rtpSec.toStringAsFixed(2)}s');
+            logger.debug(
+              '[StreamRecorder] VideoStats: RTP duration=${rtpSec.toStringAsFixed(2)}s',
+            );
           }
         }
       }
@@ -193,27 +223,34 @@ class StreamRecorder implements RecorderI {
   Future<void> _cleanupInternal() async {
     _maxDurationTimer?.cancel();
 
-    if (_sessionID != null) {
+    final sessionId = _sessionID;
+    _sessionID = null;
+    if (sessionId != null) {
       try {
         await stopStreamOnServer(
-          url: '$sdpResolverUrl/$_sessionID',
+          url: '$sdpResolverUrl/$sessionId',
           token: token,
-          id: _sessionID!,
-        ).timeout(const Duration(seconds: 2));
-      } catch (_) {}
-      _sessionID = null;
+          id: sessionId,
+        ).timeout(const Duration(seconds: 5));
+      } catch (e) {
+        logger.warn('[StreamRecorder] Server stream $sessionId not closed: $e');
+      }
     }
 
-    for (final stream in streams) {
+    final ownedStreams = streams;
+    streams = [];
+    for (final stream in ownedStreams) {
       for (final track in stream.getTracks()) {
         await track.stop();
       }
+      await stream.dispose();
     }
-    streams.clear();
 
-    if (pc != null) {
-      await pc!.close();
-      pc = null;
+    final ownedPc = pc;
+    pc = null;
+    if (ownedPc != null) {
+      await ownedPc.close();
+      await ownedPc.dispose();
     }
   }
 

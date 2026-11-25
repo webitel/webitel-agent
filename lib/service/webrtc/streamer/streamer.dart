@@ -64,6 +64,7 @@ class ScreenStreamer {
 
     List<MediaStream>? localStreams;
     MediaStream? localStream;
+    ScreenStreamer? created;
 
     try {
       // [MEDIA_CAPTURE] Execute platform-specific screen and audio capture
@@ -91,26 +92,29 @@ class ScreenStreamer {
         onClose: onClose,
         onAccept: onAccept,
       );
+      created = streamer;
 
       // Start the WebRTC handshake process (Offer -> Answer)
       await streamer._init(pc: pc);
 
       final answer = await streamer.localDescription;
-      if (answer != null) {
-        // [SDP_DIAGNOSTICS] Verify if the Answer contains video media sections
-        final hasVideo = answer.sdp?.contains('m=video');
-        logger.info(
-          '[ScreenStreamer] SDP Answer generated. Video detected: $hasVideo',
-        );
-
-        await onAccept('ss_accept', {
-          'id': notif['id'],
-          'sdp': answer.sdp,
-          'to_user_id': fromUserId,
-          'sock_id': sockId,
-          'session_id': parentId,
-        });
+      if (streamer._isClosing || answer == null) {
+        throw Exception('Screen share handshake failed');
       }
+
+      // [SDP_DIAGNOSTICS] Verify if the Answer contains video media sections
+      final hasVideo = answer.sdp?.contains('m=video');
+      logger.info(
+        '[ScreenStreamer] SDP Answer generated. Video detected: $hasVideo',
+      );
+
+      await onAccept('ss_accept', {
+        'id': notif['id'],
+        'sdp': answer.sdp,
+        'to_user_id': fromUserId,
+        'sock_id': sockId,
+        'session_id': parentId,
+      });
 
       return streamer;
     } catch (e, st) {
@@ -119,8 +123,21 @@ class ScreenStreamer {
         e,
         st,
       );
-      pc.close();
-      pc.dispose();
+      if (created != null) {
+        created.close('FactoryError');
+      } else {
+        for (final stream in [
+          ...?localStreams,
+          if (localStream != null) localStream,
+        ]) {
+          for (final track in stream.getTracks()) {
+            track.stop();
+          }
+          stream.dispose();
+        }
+        pc.close();
+        pc.dispose();
+      }
       rethrow;
     }
   }

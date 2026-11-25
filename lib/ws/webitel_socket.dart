@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:webitel_desk_track/core/storage/interface.dart';
 
 import '../core/logger/logger.dart';
@@ -48,7 +49,7 @@ class WebitelSocket {
   /// Gates all non-auth requests until 'hello' is received from server.
   /// Ensures auth completes before business logic proceeds.
   Completer<void>? _authGate;
-  bool _isAuthenticating = false;
+  Future<void>? _authFuture;
 
   // ============================================================================
   // Request Management
@@ -77,10 +78,16 @@ class WebitelSocket {
 
   /// External callbacks for recording lifecycle events.
   /// Called when recording should START (valid callId + permissions granted).
-  void Function(Map<String, dynamic> body)? onScreenRecordStart;
+  Future<bool> Function(Map<String, dynamic> body)? onScreenRecordStart;
 
   /// Called when recording should STOP (all calls/post-processing ended).
-  void Function(Map<String, dynamic> body)? onScreenRecordStop;
+  Future<void> Function(Map<String, dynamic> body)? onScreenRecordStop;
+
+  // Starts a recording only if none is running (recovery after a lost recorder).
+  Future<bool> Function(Map<String, dynamic> body)? onScreenRecordEnsure;
+
+  // The server refused the token on a reconnect: a new login is needed.
+  void Function()? onAuthRejected;
 
   // ============================================================================
   // Lifecycle Flags
@@ -94,6 +101,27 @@ class WebitelSocket {
 
   /// Prevents reconnect actions before app initialization is complete.
   bool _appInitialized = false;
+
+  // Set by disconnect(): nothing may reconnect until the next connect().
+  bool _shutdown = false;
+  Timer? _retryTimer;
+
+  // A WS drop does not stop the WebRTC recording: within this window the call
+  // state is re-checked after reconnect instead of cutting the recording.
+  @visibleForTesting
+  static Duration recordingGrace = const Duration(seconds: 60);
+  Timer? _recordingGraceTimer;
+
+  String? _recordingId;
+  bool _recordingLost = false;
+  final _recoveryAttempts = <String, int>{};
+  static const maxRecoveryAttempts = 3;
+  Timer? _recoveryTimer;
+
+  // After a reconnect the call state may be stale (a hangup lost in the gap),
+  // so while recording the agent session is re-checked until it goes idle.
+  static const staleCallCheck = Duration(seconds: 30);
+  Timer? _staleCallTimer;
 
   /// Holds the callId when recording start was blocked by missing permission.
   /// Cleared when permission is granted or the call ends.
@@ -155,9 +183,9 @@ class WebitelSocket {
       callHandler: _callHandler,
     );
     _notificationHandler.onScreenRecordStart =
-        (body) => onScreenRecordStart?.call(body);
+        (body) async => await onScreenRecordStart?.call(body) ?? false;
     _notificationHandler.onScreenRecordStop =
-        (body) => onScreenRecordStop?.call(body);
+        (body) async => await onScreenRecordStop?.call(body);
   }
 
   // ============================================================================
@@ -167,76 +195,90 @@ class WebitelSocket {
   /// Initiates the physical WebSocket connection to the server.
   /// No-op if already connected.
   Future<void> connect() async {
+    _shutdown = false;
     if (_connection.isConnected) return;
     if (config == null) {
-      logger.error('[SOCKET] Connection aborted: Config missing');
-      return;
+      throw SocketUnavailableException('config missing');
     }
     await _connection.connect(config!.url);
   }
 
-  /// Full reconnection cycle: connect + authenticate + sync + refresh.
-  /// Used for both initial connection and network recovery.
-  ///
-  /// [source] - Reason for reconnect (e.g., 'NETWORK_RESTORED', 'RETRY_TIMER')
   Future<void> _performFullReconnect(String source) async {
+    if (_shutdown) return;
     logger.info('[SOCKET] RECONNECT_START | Source: $source');
 
+    int? generation;
     try {
       await connect();
+      generation = _connection.generation;
       await authenticate();
-
-      // Fetch minimal agent info to confirm session is valid.
-      // Does NOT resync active calls (CallHandler handles that).
-      await getAgentSession();
-
       logger.info('[SOCKET] RECONNECT_SUCCESS');
+      await _resyncAfterReconnect(generation);
+    } on AuthRejectedException catch (e) {
+      logger.error('[SOCKET] RECONNECT_FAILED: $e');
+      if (!_shutdown) onAuthRejected?.call();
     } catch (e) {
       logger.error('[SOCKET] RECONNECT_FAILED: $e');
+      if (_shutdown) return;
+      if (_connection.isConnected && _connection.generation == generation) {
+        // Connected but not authenticated gets no events: drop it, which
+        // schedules the next attempt.
+        _connection.drop('AUTH_FAILED');
+      } else if (!_connection.isConnected) {
+        _scheduleRetry();
+      }
     }
   }
 
-  /// Authenticates with the server by sending auth challenge.
-  ///
-  /// Closes the auth gate (blocks all requests) until server sends 'hello'.
-  /// Timeout: 7 seconds from challenge to hello. If exceeded, completes anyway
-  /// to prevent deadlock (assumes auth is OK, worst case it fails on next request).
-  Future<void> authenticate() async {
-    if (_isAuthenticating) return;
-    _isAuthenticating = true;
+  // AuthRejectedException: the server refused the token.
+  // SocketUnavailableException: it could not be reached. Callers share one attempt.
+  Future<void> authenticate() {
+    final inFlight = _authFuture;
+    if (inFlight != null) return inFlight;
+    late final Future<void> attempt;
+    attempt = _authenticate().whenComplete(() {
+      if (identical(_authFuture, attempt)) _authFuture = null;
+    });
+    _authFuture = attempt;
+    return attempt;
+  }
+
+  Future<void> _authenticate() async {
+    try {
+      await _connection.ready.timeout(const Duration(seconds: 5));
+    } on TimeoutException {
+      throw SocketUnavailableException('transport not ready');
+    }
+    if (!_connection.isConnected) {
+      throw SocketUnavailableException('not connected');
+    }
+
+    logger.info('[SOCKET] AUTH_START (Gate Closed)');
+    final gate = Completer<void>();
+    // Only queued requests await the gate; its failure must not surface as an
+    // unhandled error when none are waiting.
+    gate.future.ignore();
+    _authGate = gate;
 
     try {
-      // Wait for transport ready with short timeout.
-      await _connection.ready.timeout(const Duration(seconds: 5));
-
-      if (!_connection.isConnected) {
-        logger.warn('[SOCKET] Aborting auth: connection not active');
-        return;
-      }
-
-      logger.info('[SOCKET] AUTH_START (Gate Closed)');
-      _authGate = Completer<void>();
-
-      // Send authentication challenge.
       await _sendRawRequest(SocketActions.authenticationChallenge, {
         'token': _token,
       });
-
-      // Wait for server 'hello' response. Timeout prevents indefinite blocking.
-      await _authGate!.future.timeout(
-        const Duration(seconds: 7),
-        onTimeout: () {
-          logger.warn('[SOCKET] Auth gate timeout, proceeding...');
-          if (_authGate?.isCompleted == false) _authGate?.complete();
-        },
-      );
-
-      logger.info('[SOCKET] AUTH_COMPLETED');
-    } catch (e, st) {
-      logger.error('[SOCKET] AUTH_FAILED: $e', e, st);
-    } finally {
-      _isAuthenticating = false;
+    } on SocketError catch (e) {
+      if (!gate.isCompleted) gate.completeError(e);
+      // Only an explicit refusal means the token is bad; anything else (server
+      // restarting, internal error, our own code-0 "Disconnected") is transient.
+      if (e.code == 401 || e.code == 403) throw AuthRejectedException(e);
+      throw SocketUnavailableException(e.toString());
+    } on TimeoutException {
+      if (!gate.isCompleted) gate.completeError(TimeoutException('auth'));
+      throw SocketUnavailableException('no reply to authentication');
     }
+
+    // An OK reply to the challenge means the session is authenticated; the
+    // 'hello' event may come before or after it.
+    if (!gate.isCompleted) gate.complete();
+    logger.info('[SOCKET] AUTH_COMPLETED');
   }
 
   // ============================================================================
@@ -337,37 +379,41 @@ class WebitelSocket {
           '[SOCKET] RECORD_START blocked: permission denied (callId=$callId) — scheduling retry',
         );
         _pendingPermissionCallId = callId;
-        _permissionRetryTimer ??= Timer.periodic(
-          const Duration(seconds: 5),
-          (_) {
-            if (!_callHandler.screenRecordingActive) {
-              _permissionRetryTimer?.cancel();
-              _permissionRetryTimer = null;
-              _pendingPermissionCallId = null;
-              return;
-            }
-            if (_screenshotService?.isControlEnabled ?? false) {
-              _permissionRetryTimer?.cancel();
-              _permissionRetryTimer = null;
-              final id = _pendingPermissionCallId!;
-              _pendingPermissionCallId = null;
-              logger.info('[SOCKET] RECORD_START (retry after permission) | callId=$id');
-              onScreenRecordStart?.call({'root_id': id, 'source': 'call_event'});
-            }
-          },
-        );
+        _permissionRetryTimer ??= Timer.periodic(const Duration(seconds: 5), (
+          _,
+        ) {
+          if (!_callHandler.screenRecordingActive) {
+            _permissionRetryTimer?.cancel();
+            _permissionRetryTimer = null;
+            _pendingPermissionCallId = null;
+            return;
+          }
+          if (_screenshotService?.isControlEnabled ?? false) {
+            _permissionRetryTimer?.cancel();
+            _permissionRetryTimer = null;
+            final id = _pendingPermissionCallId!;
+            _pendingPermissionCallId = null;
+            logger.info(
+              '[SOCKET] RECORD_START (retry after permission) | callId=$id',
+            );
+            onScreenRecordStart?.call({'root_id': id, 'source': 'call_event'});
+          }
+        });
         return;
       }
 
       _permissionRetryTimer?.cancel();
       _permissionRetryTimer = null;
       _pendingPermissionCallId = null;
+      _recordingId = callId;
+      _recordingLost = false;
       logger.info('[SOCKET] RECORD_START | callId=$callId');
       onScreenRecordStart?.call({'root_id': callId, 'source': 'call_event'});
     } else {
       _permissionRetryTimer?.cancel();
       _permissionRetryTimer = null;
       _pendingPermissionCallId = null;
+      _clearRecordingTracking();
       logger.info('[SOCKET] RECORD_STOP | reason=session_ended');
       onScreenRecordStop?.call({'reason': 'session_ended'});
     }
@@ -386,14 +432,14 @@ class WebitelSocket {
   /// - Network is restored
   /// - Connection is stuck/unresponsive
   Future<void> _forceReconnect(String source) async {
-    if (_isReconnecting) return;
+    if (_isReconnecting || _shutdown) return;
     _isReconnecting = true;
+    _retryTimer?.cancel();
 
     try {
-      // Allow any in-flight auth to complete.
-      while (_isAuthenticating) {
-        await Future.delayed(const Duration(milliseconds: 100));
-      }
+      try {
+        await _authFuture;
+      } catch (_) {}
 
       // Dispose old connection.
       _connection.dispose();
@@ -488,7 +534,8 @@ class WebitelSocket {
       _pendingRequests.remove(currentSeq);
 
       // Retry logic: SocketError only, with exponential backoff.
-      if (e is SocketError && retryCount < 2) {
+      // code 0 is our own "Disconnected": retrying on the dead socket only delays.
+      if (e is SocketError && e.code != 0 && retryCount < 2) {
         final delay = Duration(milliseconds: 1000 * (retryCount + 1));
         await Future.delayed(delay);
         return _sendRawRequest(action, data, retryCount + 1);
@@ -537,55 +584,188 @@ class WebitelSocket {
   void _onDisconnected() {
     logger.warn('[SOCKET] DISCONNECT_DETECTED | Cleaning up state...');
 
-    // ========================================================================
-    // Critical: Kill any active recording due to link loss.
-    // We cannot trust local state if network is down.
-    // ========================================================================
-    if (_callHandler.screenRecordingActive) {
+    if (_callHandler.screenRecordingActive && !_shutdown) {
       logger.warn(
-        '[SOCKET] DISCONNECT_CLEANUP: Stopping active recording due to network loss',
+        '[SOCKET] Recording kept for ${recordingGrace.inSeconds}s while reconnecting',
       );
-      onScreenRecordStop?.call({'reason': 'network_loss_cleanup'});
-      _callHandler.clear();
+      // Cancelled by a successful resync; firing means none happened in time.
+      _recordingGraceTimer ??= Timer(recordingGrace, () {
+        _recordingGraceTimer = null;
+        _stopRecordingAfterLinkLoss('network_loss_cleanup');
+      });
     }
 
-    // ========================================================================
-    // Clean up authentication state
-    // ========================================================================
-    _isAuthenticating = false;
+    _failPending('Disconnected');
+    _staleCallTimer?.cancel();
+    _staleCallTimer = null;
+    _recoveryTimer?.cancel();
+    _recoveryTimer = null;
+    _scheduleRetry();
+  }
 
+  void _scheduleRetry() {
+    if (_shutdown) return;
+    final retryDelay = _connection.getNextRetryDelay();
+    logger.info('[SOCKET] RETRY_TIMER | Scheduled in ${retryDelay.inSeconds}s');
+
+    _retryTimer?.cancel();
+    _retryTimer = Timer(retryDelay, () {
+      if (_shutdown || _isReconnecting || _connection.isConnected) return;
+      _performFullReconnect('RETRY_TIMER');
+    });
+  }
+
+  void _clearRecordingTracking() {
+    _recordingId = null;
+    _recordingLost = false;
+    _recoveryAttempts.clear();
+    _recoveryTimer?.cancel();
+    _recoveryTimer = null;
+    _staleCallTimer?.cancel();
+    _staleCallTimer = null;
+  }
+
+  // The recorder died on its own (ICE failure, network loss) while the call
+  // may still be going: start it again, now or after the next resync.
+  void notifyRecordingLost(String id) {
+    if (_shutdown || !_callHandler.screenRecordingActive) return;
+    _recordingId ??= id;
+    _recordingLost = true;
+    if (_connection.isConnected && _recordingGraceTimer == null) {
+      _scheduleRecovery();
+    }
+  }
+
+  void _scheduleRecovery() {
+    final id = _recordingId;
+    if (id == null || !_recordingLost) return;
+    final attempts = _recoveryAttempts[id] ?? 0;
+    if (attempts >= maxRecoveryAttempts) {
+      logger.error(
+        '[SOCKET] Recording $id lost; giving up after $attempts restarts',
+      );
+      return;
+    }
+    _recoveryTimer?.cancel();
+    _recoveryTimer = Timer(Duration(seconds: 5 * (attempts + 1)), () async {
+      _recoveryTimer = null;
+      if (_shutdown || !_callHandler.screenRecordingActive) return;
+      if (_recordingId != id || !_recordingLost) return;
+      // Offline or waiting for a resync: don't spend an attempt, the resync
+      // after reconnect restarts it.
+      if (!_connection.isConnected || _recordingGraceTimer != null) return;
+      _recoveryAttempts[id] = attempts + 1;
+      logger.warn(
+        '[SOCKET] Restarting lost recording $id (attempt ${attempts + 1})',
+      );
+      final ok = await onScreenRecordEnsure?.call({'root_id': id}) ?? false;
+      if (ok) {
+        _recordingLost = false;
+      } else {
+        _scheduleRecovery();
+      }
+    });
+  }
+
+  void _failPending(String reason) {
+    _authFuture = null;
     if (_authGate != null && !_authGate!.isCompleted) {
       _authGate!.completeError(
-        SocketError(detail: 'Disconnected', code: 0, id: '', status: 'FAIL'),
+        SocketError(detail: reason, code: 0, id: '', status: 'FAIL'),
       );
     }
     _authGate = null;
 
-    // ========================================================================
-    // Clean up pending requests (fail all)
-    // ========================================================================
     _isSending = false;
     for (var c in _pendingRequests.values) {
       if (!c.isCompleted) {
         c.completeError(
-          SocketError(detail: 'Disconnected', code: 0, id: '', status: ''),
+          SocketError(detail: reason, code: 0, id: '', status: ''),
         );
       }
     }
     _pendingRequests.clear();
     _outgoingQueue.clear();
+  }
 
-    // ========================================================================
-    // Schedule retry with exponential backoff
-    // ========================================================================
-    final retryDelay = _connection.getNextRetryDelay();
-    logger.info('[SOCKET] RETRY_TIMER | Scheduled in ${retryDelay.inSeconds}s');
+  void _stopRecordingAfterLinkLoss(String reason) {
+    if (!_callHandler.screenRecordingActive) return;
+    logger.warn('[SOCKET] Stopping recording: $reason');
+    _callHandler.clear();
+    _clearRecordingTracking();
+    onScreenRecordStop?.call({'reason': reason});
+  }
 
-    Future.delayed(retryDelay, () async {
-      if (!_connection.isConnected) {
-        await _performFullReconnect('RETRY_TIMER');
+  Future<void> _resyncAfterReconnect(int generation) async {
+    try {
+      _resyncRecording(await getAgentSession());
+    } catch (e) {
+      // Dropped again meanwhile: the grace timer of that drop stays in charge.
+      if (!_connection.isConnected || _connection.generation != generation) {
+        return;
       }
-    });
+      // The connection is authenticated and delivers events: keep it. Without a
+      // session the call state can't be confirmed, so keep the recording and let
+      // the periodic check decide.
+      logger.warn('[SOCKET] Agent session unavailable after reconnect: $e');
+      if (!_callHandler.screenRecordingActive) return;
+      _recordingGraceTimer?.cancel();
+      _recordingGraceTimer = null;
+      _scheduleRecovery();
+      _staleCallTimer?.cancel();
+      _staleCallTimer = Timer.periodic(
+        staleCallCheck,
+        (_) => _checkStaleCall(),
+      );
+    }
+  }
+
+  // Call events sent while the socket was down are lost, so after a reconnect
+  // the agent session decides whether the recorded call is still going.
+  void _resyncRecording(AgentSession session) {
+    final grace = _recordingGraceTimer;
+    _recordingGraceTimer = null;
+    grace?.cancel();
+    if (!_callHandler.screenRecordingActive) return;
+
+    if (!_isCallBusy(session)) {
+      _stopRecordingAfterLinkLoss('call_ended_while_disconnected');
+      return;
+    }
+    logger.info(
+      '[SOCKET] Recording continues after reconnect: call still active',
+    );
+    _scheduleRecovery();
+    _staleCallTimer?.cancel();
+    _staleCallTimer = Timer.periodic(staleCallCheck, (_) => _checkStaleCall());
+  }
+
+  bool _isCallBusy(AgentSession session) {
+    // Manual outbound calls and their post-processing live on 'out_call'.
+    const callChannels = {'call', 'out_call'};
+    const idleStates = {'waiting', 'missed', 'wrap_time', 'idle'};
+    return session.channels
+        .where((c) => callChannels.contains(c.channel))
+        .any((c) => !idleStates.contains(c.state));
+  }
+
+  Future<void> _checkStaleCall() async {
+    if (_shutdown || !_callHandler.screenRecordingActive) {
+      _staleCallTimer?.cancel();
+      _staleCallTimer = null;
+      return;
+    }
+    // Requests made while offline would sit in the queue and go out first on
+    // the next connection, ahead of the auth challenge.
+    if (!_connection.isConnected) return;
+    try {
+      final session = await getAgentSession();
+      if (!_isCallBusy(session)) {
+        _stopRecordingAfterLinkLoss('call_ended_while_disconnected');
+      }
+    } catch (e) {
+      logger.warn('[SOCKET] Stale call check failed: $e');
+    }
   }
 
   // ============================================================================
@@ -613,7 +793,24 @@ class WebitelSocket {
   /// Called when app is closing or user logs out.
   Future<void> disconnect() async {
     logger.info('[SOCKET] MANUAL_DISCONNECT | Disposing manager');
+    _shutdown = true;
+    _appInitialized = false;
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _networkDebounce?.cancel();
+    _networkDebounce = null;
+    _recordingGraceTimer?.cancel();
+    _recordingGraceTimer = null;
+    _permissionRetryTimer?.cancel();
+    _permissionRetryTimer = null;
+    _pendingPermissionCallId = null;
+    onScreenRecordStart = null;
+    onScreenRecordStop = null;
+    onScreenRecordEnsure = null;
+    onAuthRejected = null;
+    _clearRecordingTracking();
     _connection.dispose();
+    _failPending('Disconnected');
     _callHandler.clear();
     _notificationHandler.dispose();
   }
@@ -645,8 +842,8 @@ class WebitelSocket {
         if (hasNetwork) {
           logger.info('[NETWORK] RESTORED: $results');
 
-          // Don't reconnect if app still initializing
-          if (!_appInitialized) {
+          // Don't reconnect if app still initializing or the user logged out
+          if (!_appInitialized || _shutdown) {
             logger.debug('[NETWORK] IGNORE | app still initializing');
             return;
           }

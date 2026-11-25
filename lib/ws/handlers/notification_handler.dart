@@ -19,9 +19,11 @@ class NotificationHandler {
   requestExecutor;
 
   ScreenStreamer? _screenCapturer;
+  int _shareGeneration = 0;
+  bool _disposed = false;
 
-  void Function(Map<String, dynamic> body)? onScreenRecordStart;
-  void Function(Map<String, dynamic> body)? onScreenRecordStop;
+  Future<bool> Function(Map<String, dynamic> body)? onScreenRecordStart;
+  Future<void> Function(Map<String, dynamic> body)? onScreenRecordStop;
 
   NotificationHandler({
     required this.screenshotService,
@@ -56,7 +58,12 @@ class NotificationHandler {
 
         case NotificationAction.screenshot:
           // [LOGIC] Triggers an immediate desktop screenshot
-          await screenshotService?.capture();
+          final service = screenshotService;
+          if (service == null) {
+            throw Exception('Screenshot service unavailable');
+          }
+          final result = await service.capture();
+          if (result != null) throw Exception(result);
           break;
 
         case NotificationAction.screenRecordStart:
@@ -70,7 +77,10 @@ class NotificationHandler {
               'Exception: Screen recording already active from call',
             );
           }
-          onScreenRecordStart?.call(body);
+          final start = onScreenRecordStart;
+          if (start == null || !await start(body)) {
+            throw Exception('Screen recording failed to start');
+          }
           break;
 
         case NotificationAction.screenRecordStop:
@@ -84,7 +94,7 @@ class NotificationHandler {
               'Exception: Screen recording already active from call',
             );
           }
-          onScreenRecordStop?.call(body);
+          await onScreenRecordStop?.call(body);
           break;
 
         case NotificationAction.unknown:
@@ -117,19 +127,39 @@ class NotificationHandler {
 
   /// Initializes a WebRTC screen sharing session.
   Future<void> _handleScreenShare(Map<String, dynamic> notif) async {
-    // [GUARD] Close existing capturer before starting a new stream
-    _screenCapturer?.close('NEW_SHARE_REQUEST');
+    // Between a relogin and initServices() events still reach this disposed
+    // handler: refuse instead of accepting and immediately closing the share.
+    if (_disposed) throw Exception('Agent session is not ready');
 
-    _screenCapturer = await ScreenStreamer.fromNotification(
+    // [GUARD] Close existing capturer before starting a new stream
+    final generation = ++_shareGeneration;
+    _screenCapturer?.close('NEW_SHARE_REQUEST');
+    _screenCapturer = null;
+
+    ScreenStreamer? streamer;
+    streamer = await ScreenStreamer.fromNotification(
       notif: notif,
       logger: logger,
-      onClose: () => _screenCapturer = null,
+      onClose: () {
+        if (identical(_screenCapturer, streamer)) {
+          _screenCapturer = null;
+        }
+      },
       onAccept: requestExecutor,
     );
+
+    // A newer request or a logout arrived while this one was negotiating.
+    if (_disposed || generation != _shareGeneration) {
+      streamer.close('SUPERSEDED');
+      return;
+    }
+    _screenCapturer = streamer;
   }
 
   /// Resource cleanup.
   void dispose() {
+    _disposed = true;
+    _shareGeneration++;
     _screenCapturer?.close('DISPOSE');
     _screenCapturer = null;
   }

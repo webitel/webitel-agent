@@ -46,6 +46,9 @@ class CallHandler {
   ///   and preventing the recording from stopping.
   final Map<String, String> _segmentToRoot = {};
 
+  // agent_channel_id → attempt with reporting; outbound calls carry no task.
+  final Map<String, String> _reportingAttemptByChannel = {};
+
   /// Current recording state derived from [_activeCalls] and [_postProcessing].
   bool _screenRecordingActive = false;
 
@@ -218,22 +221,9 @@ class CallHandler {
           }
 
           if (hasReporting && attemptId != null) {
-            final alreadyRegistered = _postProcessing.any(
-              (p) => p['attempt_id'] == attemptId,
-            );
-
-            if (!alreadyRegistered) {
-              _postProcessing.add({
-                'attempt_id': attemptId,
-                'is_pre_registered': true,
-              });
-              logger.info(
-                '[CALL_EVENT] ⏳ Pre-registered post-processing\n'
-                '  attempt=$attemptId | root=$rootCallId\n'
-                '  postProcessing.length=${_postProcessing.length}',
-              );
-            }
+            _preRegisterPostProcessing(attemptId, rootCallId);
           }
+          _bindReportingAttempt(segmentId);
         } else if (!shouldRecord) {
           logger.debug(
             '[CALL_EVENT] record_screen=false for event=$event — '
@@ -282,6 +272,8 @@ class CallHandler {
           }
         }
 
+        _reportingAttemptByChannel.remove(segmentId);
+
         if (segmentId != null) {
           _segmentToRoot.remove(segmentId);
           logger.debug(
@@ -309,15 +301,17 @@ class CallHandler {
     void Function(bool active, String? callId) onUpdate,
   ) {
     final channel = data['data'];
-    if (channel == null) {
+    if (channel is! Map) {
       logger.warn('[CHANNEL_EVENT] Missing data object in payload — skipping');
       _evaluateState(onUpdate, null);
       return;
     }
 
     final status = channel['status']?.toString();
+    final distribute = channel['distribute'];
     final attemptId =
-        (channel['attempt_id'] ?? channel['distribute']?['attempt_id'])
+        (channel['attempt_id'] ??
+                (distribute is Map ? distribute['attempt_id'] : null))
             ?.toString();
 
     logger.debug(
@@ -336,6 +330,18 @@ class CallHandler {
       return;
     }
 
+    // Distribution: remember that this attempt ends with post-processing.
+    if (status == 'distribute' && distribute is Map) {
+      final agentChannelId = distribute['agent_channel_id']?.toString();
+      final hasReporting =
+          distribute['has_reporting'] == true ||
+          distribute['has_reporting'] == 'true';
+      if (hasReporting && agentChannelId != null && agentChannelId.isNotEmpty) {
+        _reportingAttemptByChannel[agentChannelId] = attemptId;
+        _bindReportingAttempt(agentChannelId);
+      }
+    }
+
     // -------------------------------------------------------------------------
     // Transition: pre-registered → confirmed active processing
     // -------------------------------------------------------------------------
@@ -349,13 +355,19 @@ class CallHandler {
         logger.info(
           '[CHANNEL_EVENT] ✔ Post-processing confirmed | attempt=$attemptId',
         );
-      } else {
+      } else if (_activeCalls.isNotEmpty) {
         _postProcessing.add({
           'attempt_id': attemptId,
           'is_pre_registered': false,
         });
         logger.info(
           '[CHANNEL_EVENT] ⚡ Late post-processing registration | attempt=$attemptId',
+        );
+      } else {
+        // Post-processing of a call that was not recorded must not flip the
+        // state on: it would block the next recorded call and stop manual ones.
+        logger.debug(
+          '[CHANNEL_EVENT] Processing for untracked attempt=$attemptId — ignored',
         );
       }
     }
@@ -364,6 +376,7 @@ class CallHandler {
     // Transition: active processing → finished
     // -------------------------------------------------------------------------
     if (const {'missed', 'waiting', 'wrap_time'}.contains(status)) {
+      _reportingAttemptByChannel.removeWhere((_, a) => a == attemptId);
       final beforePost = _postProcessing.length;
       _postProcessing.removeWhere((p) => p['attempt_id'] == attemptId);
       final removedPost = beforePost - _postProcessing.length;
@@ -385,6 +398,31 @@ class CallHandler {
     }
 
     _evaluateState(onUpdate, null);
+  }
+
+  void _preRegisterPostProcessing(String attemptId, String? rootCallId) {
+    if (_postProcessing.any((p) => p['attempt_id'] == attemptId)) return;
+    _postProcessing.add({'attempt_id': attemptId, 'is_pre_registered': true});
+    logger.info(
+      '[POST_PROCESS] ⏳ Pre-registered post-processing\n'
+      '  attempt=$attemptId | root=$rootCallId\n'
+      '  postProcessing.length=${_postProcessing.length}',
+    );
+  }
+
+  // Only a tracked call gets the attempt: `distribute` never starts recording.
+  void _bindReportingAttempt(String? channelId) {
+    if (channelId == null) return;
+    final attemptId = _reportingAttemptByChannel[channelId];
+    if (attemptId == null) return;
+    for (final call in _activeCalls) {
+      if (call['callId'] != channelId && call['segment_id'] != channelId) {
+        continue;
+      }
+      call['attempt_id'] ??= attemptId;
+      _preRegisterPostProcessing(attemptId, call['callId']?.toString());
+      return;
+    }
   }
 
   // ============================================================================
@@ -427,6 +465,7 @@ class CallHandler {
     _activeCalls.clear();
     _postProcessing.clear();
     _segmentToRoot.clear();
+    _reportingAttemptByChannel.clear();
     _screenRecordingActive = false;
 
     logger.info('[CALL_HANDLER] ✘ All state cleared');

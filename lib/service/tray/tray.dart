@@ -101,6 +101,8 @@ class TrayService with TrayListener {
     final items = <MenuItem>[
       MenuItem(key: 'status', label: 'Status: $_status', disabled: true),
       MenuItem.separator(),
+      MenuItem(key: 'open', label: 'Open'),
+      MenuItem.separator(),
       MenuItem(key: 'upload_config', label: 'Upload Configuration'),
       MenuItem.separator(),
       MenuItem(key: 'logout', label: 'Logout'),
@@ -119,8 +121,11 @@ class TrayService with TrayListener {
       case 'logout':
         _handleLogout();
         break;
+      case 'open':
+        AppFlow.instance.showWindow();
+        break;
       case 'close':
-        exit(0);
+        AppFlow.instance.quit();
         break;
     }
   }

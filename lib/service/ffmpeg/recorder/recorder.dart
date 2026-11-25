@@ -17,6 +17,9 @@ class LocalVideoRecorder implements RecorderI {
   final String channel;
   final IStorageService _storage; // Injected interface
 
+  @override
+  void Function(String reason)? onUnexpectedStop;
+
   late final PlatformRecorder _recorder;
   late final VideoUploadService _uploadService;
   late final FileStorageService _fileService;

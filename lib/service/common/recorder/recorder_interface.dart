@@ -10,4 +10,7 @@ abstract interface class RecorderI {
 
   /// Cleans up temporary files or states.
   Future<void> cleanup();
+
+  /// Called when the recorder stops on its own (transport loss, safety timeout).
+  abstract void Function(String reason)? onUnexpectedStop;
 }
