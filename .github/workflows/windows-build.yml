@@ -48,6 +48,28 @@ jobs:
           CL: /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
         run: flutter build windows --release
 
+      - name: Bundle the VC++ runtime
+        # The runner and the plugins link the C++ runtime dynamically (/MD). Windows
+        # without the VC++ Redistributable has no MSVCP140.dll and the app does not
+        # start, so the runtime ships next to the exe (app-local deployment).
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "no Visual Studio with the C++ x64 tools found" }
+          # The newest redist of the toolset that built the app; an older CRT than the build toolset is unsupported.
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory |
+            Where-Object Name -match '^\d+\.\d+\.\d+$' |
+            Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (-not $redist) { throw "no MSVC redist under $vs\VC\Redist\MSVC" }
+          $crt = Get-ChildItem "$($redist.FullName)\x64" -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -First 1
+          if (-not $crt) { throw "no x64 CRT folder in $($redist.FullName)" }
+          $out = 'build/windows/x64/runner/Release'
+          foreach ($dll in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            Copy-Item (Join-Path $crt.FullName $dll) $out -ErrorAction Stop
+          }
+          "CRT from $($crt.FullName)"
+          Get-ChildItem $out -Filter '*140*.dll' | Format-Table Name, Length, @{ n = 'Version'; e = { $_.VersionInfo.FileVersion } }
+
       - name: Zip release folder
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath webitel-desk-track-windows-x64.zip
