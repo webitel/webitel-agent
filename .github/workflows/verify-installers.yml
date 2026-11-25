@@ -3,9 +3,9 @@ run-name: Verify installers ${{ inputs.tag }}
 
 # Smoke-tests signed installers attached to a (draft) release before it is
 # published: Authenticode status of the MSI and of every installed exe/dll,
-# silent MSI install/uninstall, app start, MSI upgrade over the latest
-# published release, and MSIX install (Windows checks the package signature
-# and that the manifest Publisher matches the certificate).
+# silent MSI install/uninstall, bundled VC++ runtime, app start, MSI upgrade
+# over the latest published release, and MSIX install (Windows checks the
+# package signature and that the manifest Publisher matches the certificate).
 
 on:
   workflow_dispatch:
@@ -55,6 +55,10 @@ jobs:
           if ($p.ExitCode -ne 0) { Get-Content msi-install.log -Tail 60; throw "msiexec install exit $($p.ExitCode)" }
           $dir = "C:\Program Files\WebitelDeskTrack"
           if (-not (Test-Path "$dir\webitel_desk_track.exe")) { throw "app not installed to $dir" }
+          # The runner has the VC++ Redistributable, so a missing app-local runtime would not show up at app start.
+          $crt = 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'
+          $missing = $crt | Where-Object { -not (Test-Path "$dir\$_") }
+          if ($missing) { throw "VC++ runtime not bundled in the MSI: $($missing -join ', ')" }
           $bad = Get-ChildItem $dir -Recurse -Include *.exe,*.dll |
             ForEach-Object { $s = Get-AuthenticodeSignature $_.FullName; [pscustomobject]@{File=$_.Name; Status=$s.Status; Signer=$s.SignerCertificate.Subject.Split(',')[0]} } |
             Tee-Object -Variable all |
@@ -102,6 +106,8 @@ jobs:
           Add-AppxPackage -Path $msix
           $pkg = Get-AppxPackage -Name webitel.desktrack
           if (-not $pkg) { throw "MSIX not installed" }
+          $missing = 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll' | Where-Object { -not (Test-Path (Join-Path $pkg.InstallLocation $_)) }
+          if ($missing) { Remove-AppxPackage -Package $pkg.PackageFullName; throw "VC++ runtime not bundled in the MSIX: $($missing -join ', ')" }
           $pkg | Format-List Name, Version, Publisher, SignatureKind, Status
           Remove-AppxPackage -Package $pkg.PackageFullName
           "MSIX install/remove ok"
