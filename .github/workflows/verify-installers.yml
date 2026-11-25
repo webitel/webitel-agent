@@ -59,10 +59,11 @@ jobs:
           $crt = 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'
           $missing = $crt | Where-Object { -not (Test-Path "$dir\$_") }
           if ($missing) { throw "VC++ runtime not bundled in the MSI: $($missing -join ', ')" }
+          # Microsoft signs the VC++ runtime DLLs as "Microsoft Windows Software Compatibility Publisher".
           $bad = Get-ChildItem $dir -Recurse -Include *.exe,*.dll |
             ForEach-Object { $s = Get-AuthenticodeSignature $_.FullName; [pscustomobject]@{File=$_.Name; Status=$s.Status; Signer=$s.SignerCertificate.Subject.Split(',')[0]} } |
             Tee-Object -Variable all |
-            Where-Object { $_.Status -ne 'Valid' -or $_.Signer -notin @("CN=$env:EXPECTED_SIGNER", 'CN=Microsoft Corporation') }
+            Where-Object { $_.Status -ne 'Valid' -or $_.Signer -notin @("CN=$env:EXPECTED_SIGNER", 'CN=Microsoft Corporation', 'CN=Microsoft Windows Software Compatibility Publisher') }
           $all | Format-Table -AutoSize
           if ($bad) { throw "unsigned, invalid or unexpectedly signed binaries: $($bad.File -join ', ')" }
           $lnk = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Webitel Desk Track\Webitel Desk Track.lnk"
